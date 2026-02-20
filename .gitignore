@@ -1,2 +1,5 @@
 *.env
 /Vector Files
+/models
+cuda-keyring_1.1-1_all.deb
+.vscode/settings.json
