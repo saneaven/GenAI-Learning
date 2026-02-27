@@ -1,0 +1,101 @@
+{# =============================================================================
+   13_subplot_management.jinja2
+   
+   Purpose:  Teach the model to track, create, and weave subplots across
+             multiple chapters using lorebook entries and outline patches.
+   Input:    Novel record with characters and outline.
+   Output:   JSONL lines — subplot integration examples.
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+
+{% set sys_content %}
+{{ m.system_prompt(
+    genre=genre, logline=logline, outline=outline,
+    characters=characters, locations=locations,
+    organizations=organizations, lorebooks=lorebooks,
+    guidelines=guidelines,
+    include_outline_details=true, include_chapter_details=true
+) }}
+
+Help the user manage subplots — track them across chapters, create lorebook entries to document subplot threads, and modify outline chapters to weave subplot beats into the story structure.
+{% endset %}
+
+{% if characters | length > 0 and outline and outline.acts %}
+{% for char in characters[:2] %}
+{% set ns = namespace(call_counter=0) %}
+{% set messages = [] %}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+
+{# 1. User wants to add a subplot #}
+{% set subplot_phrases = [
+  "I want to add a subplot about %s's hidden past. Help me weave it into the existing outline.",
+  "Let's develop a subplot for %s — their secret motivation. Where should we thread it?",
+  "I need a subplot involving %s that runs through the middle section. Can you help me plan it?"
+] %}
+{% set phrase = subplot_phrases[(char.name | length) % (subplot_phrases | length)] %}
+{% set _ = messages.append({"role": "user", "content": phrase % char.name}) %}
+
+{# 2. Search for the character's appearances #}
+{% set cid1 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Great idea! Let me find where " ~ char.name ~ " currently appears across the chapters so we can identify the best places to plant subplot beats.",
+  "tool_calls": [{"id": cid1, "type": "function", "function": {"name": "rag_search", "arguments": {"queries": [char.name ~ " chapter appearance", char.name ~ " scenes", char.name ~ " role"]} | tojson}}]
+}) %}
+
+{# Synthesize results from outline chapters that mention the character #}
+{% set char_chapters = [] %}
+{% for act in outline.acts %}
+  {% for ch in act.chapters %}
+    {% if char.name in ch.content %}
+      {% set _ = char_chapters.append({"chapter": ch.name, "act": act.name, "id": ch.id, "excerpt": ch.content[:200]}) %}
+    {% endif %}
+  {% endfor %}
+{% endfor %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid1, "content": {"results": char_chapters if char_chapters else [{"chapter": "various", "excerpt": char.name ~ " appears in the story"}]} | tojson}) %}
+
+{# 3. Propose subplot placement #}
+{% set placement_count = [char_chapters | length, 3] | min %}
+{% set _ = messages.append({"role": "assistant", "content": "**" ~ char.name ~ "** appears in " ~ (char_chapters | length if char_chapters else "several") ~ " chapters. Here's my proposed subplot integration plan:\n\n1. **Setup**: Plant the first hint early — a cryptic reference or behavioral tell\n2. **Development**: Deepen the subplot in the middle chapters with escalating tension\n3. **Payoff**: The subplot reaches its climax and ties back to the main plot\n\nI'd suggest threading this through " ~ placement_count ~ " key chapters. Want me to proceed with creating the subplot tracker and updating the outline?"}) %}
+
+{# 4. User approves #}
+{% set _ = messages.append({"role": "user", "content": "Yes, do it. Create a lorebook entry to track it and update the relevant chapters."}) %}
+
+{# 5. Create lorebook entry #}
+{% set cid2 = m.next_call_id(ns) %}
+{% set subplot_content = "Subplot Thread: " ~ char.name ~ "'s Hidden Past\n\nSetup: Introduce subtle hints about " ~ char.name ~ "'s secret in early chapters through behavioral inconsistencies and guarded reactions.\n\nDevelopment: Escalate through discovered evidence, confrontations, and near-revelations.\n\nPayoff: Full revelation that recontextualizes earlier scenes and impacts the main plot.\n\nChapters: " ~ (char_chapters | map(attribute='chapter') | join(', ') if char_chapters else "TBD") %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid2, "type": "function", "function": {"name": "create_story_object", "arguments": {"type": "lorebook", "name": "Subplot: " ~ char.name ~ "'s Hidden Past", "description": "Tracks the subplot thread about " ~ char.name ~ "'s secret backstory", "content": subplot_content} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid2, "content": '{"success": true, "id": "lore_subplot_' ~ char.id ~ '"}'}) %}
+
+{# 6. Patch outline chapters to add subplot beats #}
+{% for ch_data in char_chapters[:3] %}
+  {% set cid_patch = m.next_call_id(ns) %}
+  {% set beat_labels = ["SETUP", "DEVELOPMENT", "ESCALATION"] %}
+  {% set beat = beat_labels[loop.index0 % 3] %}
+  {% set subplot_beat = "\n\n[SUBPLOT - " ~ char.name ~ "'s Hidden Past - " ~ beat ~ "]: Weave in a subplot beat here — " ~ char.name ~ " shows signs of their hidden past through their behavior or dialogue." %}
+  
+  {# Find the original chapter content to patch #}
+  {% for act in outline.acts %}
+    {% for ch in act.chapters %}
+      {% if ch.id == ch_data.id %}
+        {% set old_tail = ch.content[-100:] if ch.content | length > 100 else ch.content %}
+        {% set _ = messages.append({
+          "role": "assistant",
+          "content": None,
+          "tool_calls": [{"id": cid_patch, "type": "function", "function": {"name": "patch_outline_chapter", "arguments": {"id": ch.id, "field": "content", "old": old_tail, "new": old_tail ~ subplot_beat} | tojson}}]
+        }) %}
+        {% set _ = messages.append({"role": "tool", "tool_call_id": cid_patch, "content": '{"success": true}'}) %}
+      {% endif %}
+    {% endfor %}
+  {% endfor %}
+{% endfor %}
+
+{% set _ = messages.append({"role": "assistant", "content": "All set! Here's what I've done:\n\n1. Created a **lorebook entry** to track \"" ~ char.name ~ "'s Hidden Past\" subplot with setup, development, and payoff phases\n2. Updated " ~ [char_chapters | length, 3] | min ~ " chapter outlines with specific subplot beat markers\n\nThe subplot is now woven into the outline structure. When we write or revise these chapters, the subplot beats will be part of the plan. Want to start writing any of these chapters, or refine the subplot further?"}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endfor %}
+{% endif %}

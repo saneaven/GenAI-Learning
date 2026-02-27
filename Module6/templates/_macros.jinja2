@@ -1,0 +1,162 @@
+{# =============================================================================
+   _macros.jinja2
+   
+   Shared macros and utilities used across all training-data templates.
+   Import this at the top of every template:
+     {% import '_macros.jinja2' as m %}
+   
+   Provides:
+     - next_call_id()       : auto-incrementing tool call IDs
+     - system_prompt()      : standardized system prompt construction
+     - tool_call()          : properly formatted assistant tool-call message
+     - tool_result()        : properly formatted tool result message
+     - assistant_msg()      : simple assistant text message
+     - user_msg()           : simple user text message
+     - success_result()     : shorthand for a successful tool result
+     - error_result()       : shorthand for an error tool result
+     - random_phrase()      : pick a random phrase from a list (deterministic via seed)
+   ============================================================================= #}
+
+{# ---------------------------------------------------------------------------
+   CALL-ID COUNTER
+   Usage:
+     {% set ns = namespace(call_counter=0) %}
+     Then pass ns to next_call_id macro.
+   --------------------------------------------------------------------------- #}
+{% macro next_call_id(ns) -%}
+{%- set ns.call_counter = ns.call_counter + 1 -%}
+call_{{ "%03d" | format(ns.call_counter) }}
+{%- endmacro %}
+
+{# ---------------------------------------------------------------------------
+   SYSTEM PROMPT BUILDER
+   Builds a context-aware system prompt from available project data.
+   Parameters control what sections to include (to avoid leaking future info).
+   --------------------------------------------------------------------------- #}
+{% macro system_prompt(
+    genre=None,
+    logline=None,
+    outline=None,
+    characters=None,
+    locations=None,
+    organizations=None,
+    lorebooks=None,
+    guidelines=None,
+    include_outline_details=true,
+    include_chapter_details=false,
+    extra_context=""
+) %}
+You are an expert novel-writing assistant. You collaborate with authors to build compelling stories using structured project tools. You have access to tools for creating and managing characters, locations, organizations, lore entries, outlines, and manuscript text. Always use the appropriate tool calls to read existing project state before making changes, and to persist your work.
+
+## Current Project
+- **Title**: {{ outline.name if outline and outline.name else "Untitled" }}
+- **Genre**: {{ genre if genre else "Not yet defined" }}
+- **Logline**: {{ logline if logline else "Not yet defined" }}
+{% if guidelines and guidelines.authorNote %}
+
+## Writing Guidelines
+{{ guidelines.authorNote }}
+{% endif %}
+{% if characters and characters | length > 0 %}
+
+## Characters
+{% for char in characters %}
+- **{{ char.name }}**{% if char.description %}: {{ char.description }}{% endif %}
+
+{% endfor %}
+{% endif %}
+{% if locations and locations | length > 0 %}
+
+## Locations
+{% for loc in locations %}
+- **{{ loc.name }}**{% if loc.description %}: {{ loc.description }}{% endif %}
+
+{% endfor %}
+{% endif %}
+{% if organizations and organizations | length > 0 %}
+
+## Organizations
+{% for org in organizations %}
+- **{{ org.name }}**{% if org.description %}: {{ org.description }}{% endif %}
+
+{% endfor %}
+{% endif %}
+{% if lorebooks and lorebooks | length > 0 %}
+
+## Lorebook
+{% for entry in lorebooks %}
+- **{{ entry.name }}**{% if entry.description %}: {{ entry.description }}{% endif %}
+
+{% endfor %}
+{% endif %}
+{% if include_outline_details and outline and outline.acts %}
+
+## Outline
+{% if outline.description %}{{ outline.description }}{% endif %}
+
+{% for act in outline.acts %}
+### {{ act.name }}
+{% if act.description %}{{ act.description }}{% endif %}
+
+{% if include_chapter_details %}
+{% for ch in act.chapters %}
+- **{{ ch.name }}**{% if ch.description %}: {{ ch.description }}{% endif %}
+
+{% endfor %}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% if extra_context %}
+
+{{ extra_context }}
+{% endif %}
+{% endmacro %}
+
+{# ---------------------------------------------------------------------------
+   MESSAGE BUILDERS
+   --------------------------------------------------------------------------- #}
+{% macro user_msg(content) -%}
+{"role": "user", "content": {{ content | tojson }}}
+{%- endmacro %}
+
+{% macro assistant_msg(content) -%}
+{"role": "assistant", "content": {{ content | tojson }}}
+{%- endmacro %}
+
+{# ---------------------------------------------------------------------------
+   TOOL CALL MESSAGE
+   Produces an assistant message with one or more tool calls.
+   tool_calls_list should be a list of dicts: [{"id": ..., "name": ..., "arguments": {...}}]
+   --------------------------------------------------------------------------- #}
+{% macro tool_call_msg(tool_calls_list, content=None) -%}
+{"role": "assistant", "content": {% if content %}{{ content | tojson }}{% else %}null{% endif %}, "tool_calls": [
+{%- for tc in tool_calls_list %}
+  {"id": {{ tc.id | tojson }}, "type": "function", "function": {"name": {{ tc.name | tojson }}, "arguments": {{ tc.arguments | tojson | tojson }}}}{% if not loop.last %},{% endif %}
+
+{%- endfor %}
+]}
+{%- endmacro %}
+
+{# Single tool call shorthand #}
+{% macro single_tool_call(call_id, name, arguments, content=None) -%}
+{"role": "assistant", "content": {% if content %}{{ content | tojson }}{% else %}null{% endif %}, "tool_calls": [{"id": {{ call_id | tojson }}, "type": "function", "function": {"name": {{ name | tojson }}, "arguments": {{ arguments | tojson | tojson }}}}]}
+{%- endmacro %}
+
+{# ---------------------------------------------------------------------------
+   TOOL RESULT MESSAGE
+   --------------------------------------------------------------------------- #}
+{% macro tool_result(call_id, content) -%}
+{"role": "tool", "tool_call_id": {{ call_id | tojson }}, "content": {{ content | tojson }}}
+{%- endmacro %}
+
+{% macro success_result(call_id, extra=None) -%}
+{% if extra -%}
+{{ tool_result(call_id, '{"success": true, ' ~ extra ~ '}') }}
+{%- else -%}
+{{ tool_result(call_id, '{"success": true}') }}
+{%- endif %}
+{%- endmacro %}
+
+{% macro error_result(call_id, message) -%}
+{{ tool_result(call_id, '{"error": "' ~ message ~ '"}') }}
+{%- endmacro %}

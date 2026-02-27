@@ -1,0 +1,67 @@
+{# =============================================================================
+   01_setup_basic_info.jinja2
+   
+   Purpose:  Teach the model to set up a novel project from scratch.
+   Input:    A novel record with at least genre, logline, and outline.name.
+   Output:   One JSONL line — a chat conversation where the user describes their
+             novel idea and the assistant calls replace_basic_info.
+   
+   Conversation flow:
+     1. System prompt (minimal — new project)
+     2. User describes novel idea (synthesized from genre + logline)
+     3. Assistant responds enthusiastically, calls replace_basic_info
+     4. Tool returns success
+     5. Assistant confirms and asks about next steps
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+{% set ns = namespace(call_counter=0) %}
+
+{# --- Phrase banks for natural variation ----------------------------------- #}
+{% set user_intro_phrases = [
+  "I have an idea for a new novel. It's a %s story — %s",
+  "I want to write a %s novel. The concept: %s",
+  "Hey, I'd like to start a new project. Genre is %s. Here's the pitch: %s",
+  "New novel idea! Think %s. %s",
+  "Let's start a new book together. It's %s — %s",
+  "I've been thinking about a %s story. The idea is: %s",
+  "Starting fresh! I want to write something in the %s genre. The premise is %s",
+  "I've got a concept for a %s novel I want to develop. %s"
+] %}
+
+{% set title_phrases = [
+  "I'm calling it \"%s\".",
+  "Working title: \"%s\".",
+  "The title is \"%s\".",
+  "I'm thinking of calling it \"%s\".",
+  "Title: \"%s\"."
+] %}
+
+{% set assistant_confirm_phrases = [
+  "Great concept! I've set up the project with your details. Here's what we have so far:\n\n- **Title**: %s\n- **Genre**: %s\n- **Logline**: %s\n\nWould you like to start building out the world — characters, locations, or organizations? Or would you prefer to jump into outlining the plot?",
+  "Love this premise! I've saved the project basics. Your %s novel \"%s\" is ready to develop.\n\nWhat would you like to tackle first — characters and world-building, or should we sketch out the plot structure?",
+  "Excellent — the project is set up! \"%s\" sounds like a compelling %s story.\n\nShall we start fleshing out the cast of characters, or would you prefer to lay out the story's structure first?",
+  "I've initialized the project with your vision. \"%s\" — a %s story about %s — has a lot of potential.\n\nReady to dive in. Where would you like to start: characters, world-building, or the outline?"
+] %}
+
+{# --- Extract data from the record ---------------------------------------- #}
+{% set title = outline.name if outline and outline.name else "Untitled" %}
+{% set g = genre if genre else "Fiction" %}
+{% set ll = logline if logline else "" %}
+
+{# --- Build the conversation ---------------------------------------------- #}
+{% set cid1 = m.next_call_id(ns) %}
+
+{# Select phrases using a simple hash for determinism across regenerations #}
+{% set user_phrase = user_intro_phrases[(title | length) % (user_intro_phrases | length)] %}
+{% set title_phrase = title_phrases[(g | length) % (title_phrases | length)] %}
+{% set confirm_phrase = assistant_confirm_phrases[(ll | length) % (assistant_confirm_phrases | length)] %}
+
+{"messages": [{"role": "system", "content": {{ "You are an expert novel-writing assistant. You collaborate with authors to build compelling stories using structured project tools. You have access to tools for creating and managing characters, locations, organizations, lore entries, outlines, and manuscript text.\n\nThis is a brand-new project with no content yet. Help the user set up their novel." | tojson }}}, {{ m.user_msg((user_phrase % (g, ll)) ~ " " ~ (title_phrase % title)) }}, {{ m.single_tool_call(cid1, "replace_basic_info", {"title": title, "logline": ll, "genre": g}, "That sounds like a fantastic premise! Let me set up the project for you.") }}, {{ m.success_result(cid1) }}, {% if confirm_phrase.count('%s') == 4 -%}
+{{ m.assistant_msg(confirm_phrase % (title, g, ll, "")) }}
+{%- elif confirm_phrase.count('%s') == 3 -%}
+{{ m.assistant_msg(confirm_phrase % (title, g, ll)) }}
+{%- elif confirm_phrase.count('%s') == 2 -%}
+{{ m.assistant_msg(confirm_phrase % (g, title)) }}
+{%- else -%}
+{{ m.assistant_msg(confirm_phrase % title) }}
+{%- endif %}]}

@@ -1,0 +1,116 @@
+{# =============================================================================
+   06_retrieval_and_search.jinja2
+   
+   Purpose:  Teach the model to use keyword_search and rag_search effectively
+             to answer questions about the novel's content.
+   Input:    A novel record with characters, locations, and manuscript chapters.
+   Output:   Multiple JSONL lines — search scenarios derived from the novel data.
+   
+   Conversation flow:
+     1. User: asks a question about their novel content
+     2. Assistant: calls keyword_search or rag_search
+     3. Tool: returns results (synthesized from actual DB content)
+     4. Assistant: answers the question based on results
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+
+{% set sys_content %}
+{{ m.system_prompt(
+    genre=genre,
+    logline=logline,
+    outline=outline,
+    characters=characters,
+    locations=locations,
+    organizations=organizations,
+    lorebooks=lorebooks,
+    guidelines=guidelines,
+    include_outline_details=true,
+    include_chapter_details=true
+) }}
+
+Help the user find and understand content within their novel project. Use keyword_search for specific term lookups and rag_search for semantic/conceptual queries.
+{% endset %}
+
+{# --- Generate keyword_search examples from characters -------------------- #}
+{% if characters is defined and characters | length > 0 %}
+{% for char in characters %}
+{% set ns = namespace(call_counter=0) %}
+{% set cid = m.next_call_id(ns) %}
+
+{% set kw_question_phrases = [
+  "Where does %s appear in the manuscript?",
+  "Find all scenes that mention %s.",
+  "Which chapters feature %s?",
+  "Search for %s across the manuscript — I want to see where they show up."
+] %}
+{% set q = kw_question_phrases[(char.name | length) % (kw_question_phrases | length)] %}
+
+{# Synthesize search results from manuscript chapters that might mention the character #}
+{% set results = [] %}
+{% if manuscript and manuscript.chapters %}
+  {% for ms_ch in manuscript.chapters %}
+    {% if ms_ch.chapter_text and char.name in ms_ch.chapter_text %}
+      {# Find approximate location of name mention #}
+      {% set idx = ms_ch.chapter_text.index(char.name) %}
+      {% set start = [idx - 80, 0] | max %}
+      {% set end = [idx + 80, ms_ch.chapter_text | length] | min %}
+      {% set _ = results.append({"chapter_id": ms_ch.id, "chapter_name": ms_ch.name, "excerpt": ms_ch.chapter_text[start:end]}) %}
+    {% endif %}
+  {% endfor %}
+{% endif %}
+
+{% set messages = [] %}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+{% set _ = messages.append({"role": "user", "content": q % char.name}) %}
+
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid, "type": "function", "function": {"name": "keyword_search", "arguments": {"keyword": char.name} | tojson}}]
+}) %}
+
+{% if results | length > 0 %}
+  {% set _ = messages.append({"role": "tool", "tool_call_id": cid, "content": {"results": results} | tojson}) %}
+  {% set _ = messages.append({"role": "assistant", "content": "I found **" ~ char.name ~ "** in " ~ results | length ~ " chapter(s):\n\n" ~ results | map(attribute='chapter_name') | join(', ') ~ "\n\nWould you like me to look more closely at any of these appearances?"}) %}
+{% else %}
+  {% set _ = messages.append({"role": "tool", "tool_call_id": cid, "content": '{"results": []}'}) %}
+  {% set _ = messages.append({"role": "assistant", "content": "I didn't find any direct mentions of **" ~ char.name ~ "** in the manuscript yet. They may not have been written into any chapters, or they might be referred to by a different name or title. Would you like me to try a broader search?"}) %}
+{% endif %}
+
+{"messages": {{ messages | tojson }}}
+{% endfor %}
+{% endif %}
+
+{# --- Generate rag_search examples from lorebook/thematic queries --------- #}
+{% if lorebooks is defined and lorebooks | length > 0 %}
+{% for entry in lorebooks %}
+{% set ns = namespace(call_counter=0) %}
+{% set cid = m.next_call_id(ns) %}
+
+{% set rag_question_phrases = [
+  "What do we know about %s in the story so far?",
+  "Can you find everything related to %s across my project?",
+  "Search for information about %s — I want to make sure it's consistent.",
+  "Pull up everything we have on %s."
+] %}
+{% set q = rag_question_phrases[(entry.name | length) % (rag_question_phrases | length)] %}
+
+{% set messages = [] %}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+{% set _ = messages.append({"role": "user", "content": q % entry.name}) %}
+
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid, "type": "function", "function": {"name": "rag_search", "arguments": {"queries": [entry.name, entry.name ~ " history", entry.name ~ " details"]} | tojson}}]
+}) %}
+
+{# Return the lorebook entry itself plus any matching manuscript excerpts #}
+{% set rag_results = [{"source": "lorebook:" ~ entry.id, "name": entry.name, "excerpt": entry.content[:400]}] %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid, "content": {"results": rag_results} | tojson}) %}
+
+{% set _ = messages.append({"role": "assistant", "content": "Here's what we have on **" ~ entry.name ~ "**:\n\nFrom the lorebook: " ~ (entry.description if entry.description else entry.content[:200]) ~ "\n\nWould you like me to search the manuscript for how this appears in the actual prose?"}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endfor %}
+{% endif %}

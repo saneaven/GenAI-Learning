@@ -1,0 +1,91 @@
+{# =============================================================================
+   18_chapter_summary_and_notes.jinja2
+   
+   Purpose:  Teach the model to update chapter descriptions and outline summaries
+             to match actual manuscript content after writing or revision.
+   Input:    Novel record with manuscript chapters and matching outline chapters.
+   Output:   JSONL lines — one per chapter that has both manuscript and outline data.
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+
+{% set sys_content %}
+{{ m.system_prompt(
+    genre=genre, logline=logline, outline=outline,
+    characters=characters, locations=locations,
+    organizations=organizations, lorebooks=lorebooks,
+    guidelines=guidelines,
+    include_outline_details=true, include_chapter_details=true
+) }}
+
+When updating outline entries to match manuscript content, capture: key events, character developments, thematic beats, and any departures from the original plan. The updated outline should serve as an accurate reference for the actual written content.
+{% endset %}
+
+{% if manuscript and manuscript.chapters and outline and outline.acts %}
+{% for ms_ch in manuscript.chapters %}
+{% if ms_ch.chapter_text and ms_ch.chapter_text | length > 200 %}
+
+{# Find matching outline chapter #}
+{% set ol_ch = namespace(found=None, act=None) %}
+{% for act in outline.acts %}
+  {% for ch in act.chapters %}
+    {% if ch.id == ms_ch.id %}
+      {% set ol_ch.found = ch %}
+      {% set ol_ch.act = act %}
+    {% endif %}
+  {% endfor %}
+{% endfor %}
+
+{% if ol_ch.found %}
+{% set ns = namespace(call_counter=0) %}
+{% set ch_name = ms_ch.name if ms_ch.name else ol_ch.found.name %}
+{% set messages = [] %}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+
+{% set update_phrases = [
+  "I've rewritten %s significantly. Can you update the outline to match what's actually in the manuscript now?",
+  "The outline for %s is outdated — update it to reflect the current prose.",
+  "%s has changed a lot from the original plan. Sync the outline with what's written.",
+  "Can you read %s and update the outline entry? The plan is stale."
+] %}
+{% set phrase = update_phrases[(ch_name | length) % (update_phrases | length)] %}
+{% set _ = messages.append({"role": "user", "content": phrase % ch_name}) %}
+
+{# Read manuscript #}
+{% set cid1 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Let me read the current manuscript and compare it with the outline.",
+  "tool_calls": [{"id": cid1, "type": "function", "function": {"name": "read_manuscript", "arguments": {"id": ms_ch.id} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid1, "content": {"id": ms_ch.id, "content": ms_ch.chapter_text} | tojson}) %}
+
+{# Read current outline #}
+{% set cid2 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid2, "type": "function", "function": {"name": "read_outline", "arguments": {"id": ol_ch.found.id, "type": "chapter"} | tojson}}]
+}) %}
+{% set old_plan = {"id": ol_ch.found.id, "name": ol_ch.found.name, "content": ol_ch.found.content} %}
+{% if ol_ch.found.description %}{% set old_plan = old_plan | combine({"description": ol_ch.found.description}) %}{% endif %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid2, "content": old_plan | tojson}) %}
+
+{# Update the outline with a replace #}
+{% set cid3 = m.next_call_id(ns) %}
+{% set updated_desc = ms_ch.chapter_text[:120] ~ "..." if ms_ch.chapter_text | length > 120 else ms_ch.chapter_text %}
+{% set updated_content = "Based on the written manuscript: " ~ (ms_ch.chapter_text[:500] ~ "..." if ms_ch.chapter_text | length > 500 else ms_ch.chapter_text) %}
+{% set replace_args = {"id": ol_ch.found.id, "name": ch_name, "description": updated_desc, "content": updated_content} %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "The manuscript has evolved from the original plan. Let me update the outline to reflect what's actually written.",
+  "tool_calls": [{"id": cid3, "type": "function", "function": {"name": "replace_outline_chapter", "arguments": replace_args | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid3, "content": '{"success": true}'}) %}
+
+{% set _ = messages.append({"role": "assistant", "content": "The outline for **" ~ ch_name ~ "** is now updated to match the manuscript. Key differences from the original plan:\n\n- The chapter description now reflects the actual content rather than the initial plan\n- Scene beats and events are updated to match what was written\n- Character involvement and plot points reflect the manuscript as-written\n\nThe outline is now a reliable reference for this chapter's content."}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endif %}
+{% endif %}
+{% endfor %}
+{% endif %}

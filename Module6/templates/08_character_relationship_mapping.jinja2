@@ -1,0 +1,111 @@
+{# =============================================================================
+   08_character_relationship_mapping.jinja2
+   
+   Purpose:  Teach the model to analyze and update characters based on their
+             relationships with other characters in the story.
+   Input:    Novel record with characters and manuscript chapters.
+   Output:   JSONL lines — one per character pair that co-occur in manuscript.
+   
+   Conversation flow:
+     1. User asks about relationship between two characters
+     2. Assistant uses rag_search to find scenes with both
+     3. Assistant summarizes the relationship
+     4. User asks to update a character profile
+     5. Assistant reads then patches the character profile
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+
+{% set sys_content %}
+{{ m.system_prompt(
+    genre=genre,
+    logline=logline,
+    outline=outline,
+    characters=characters,
+    locations=locations,
+    organizations=organizations,
+    lorebooks=lorebooks,
+    guidelines=guidelines,
+    include_outline_details=true,
+    include_chapter_details=true
+) }}
+
+Help the user understand and document character relationships. Use search tools to find scenes where characters interact, then update profiles to reflect their dynamics.
+{% endset %}
+
+{# --- Generate examples for character pairs ------------------------------- #}
+{% if characters is defined and characters | length >= 2 and manuscript and manuscript.chapters %}
+
+{# Find character pairs that co-occur in at least one chapter #}
+{% for i in range(characters | length) %}
+{% for j in range(i + 1, characters | length) %}
+{% set char_a = characters[i] %}
+{% set char_b = characters[j] %}
+
+{# Check if both appear in any chapter #}
+{% set co_occur = namespace(found=false, excerpts=[]) %}
+{% for ms_ch in manuscript.chapters %}
+  {% if ms_ch.chapter_text and char_a.name in ms_ch.chapter_text and char_b.name in ms_ch.chapter_text %}
+    {% set co_occur.found = true %}
+    {# Extract a short excerpt around the first co-occurrence #}
+    {% set idx_a = ms_ch.chapter_text.index(char_a.name) %}
+    {% set start = [idx_a - 100, 0] | max %}
+    {% set end = [idx_a + 200, ms_ch.chapter_text | length] | min %}
+    {% set _ = co_occur.excerpts.append({"chapter": ms_ch.name, "excerpt": ms_ch.chapter_text[start:end]}) %}
+  {% endif %}
+{% endfor %}
+
+{% if co_occur.found %}
+{% set ns = namespace(call_counter=0) %}
+{% set messages = [] %}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+
+{# 1. User asks about the relationship #}
+{% set rel_phrases = [
+  "How do %s and %s relate to each other? I want to make sure their dynamic is consistent.",
+  "What's the relationship between %s and %s? Can you check the manuscript?",
+  "I need to understand the dynamic between %s and %s better. Search the manuscript for their interactions."
+] %}
+{% set rel_q = rel_phrases[((char_a.name | length) + (char_b.name | length)) % (rel_phrases | length)] %}
+{% set _ = messages.append({"role": "user", "content": rel_q % (char_a.name, char_b.name)}) %}
+
+{# 2. Assistant searches #}
+{% set cid1 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Let me search for scenes where they interact.",
+  "tool_calls": [{"id": cid1, "type": "function", "function": {"name": "rag_search", "arguments": {"queries": [char_a.name ~ " " ~ char_b.name, char_a.name ~ " interaction dialogue", char_b.name ~ " " ~ char_a.name ~ " scene"]} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid1, "content": {"results": co_occur.excerpts} | tojson}) %}
+
+{# 3. Assistant summarizes #}
+{% set _ = messages.append({"role": "assistant", "content": "I found " ~ co_occur.excerpts | length ~ " scene(s) where **" ~ char_a.name ~ "** and **" ~ char_b.name ~ "** interact. Based on these passages, their dynamic appears to involve tension and mutual dependency — they're connected through the story's central conflict. Would you like me to update either character's profile with relationship notes?"}) %}
+
+{# 4. User requests update #}
+{% set _ = messages.append({"role": "user", "content": "Yes, update " ~ char_a.name ~ "'s profile to reflect this relationship."}) %}
+
+{# 5. Read then patch #}
+{% set cid2 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid2, "type": "function", "function": {"name": "read_story_object", "arguments": {"id": char_a.id, "type": "character"} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid2, "content": {"id": char_a.id, "name": char_a.name, "content": char_a.content} | tojson}) %}
+
+{% set cid3 = m.next_call_id(ns) %}
+{% set relationship_note = "\n\n## Relationship with " ~ char_b.name ~ "\nConnected through the central conflict. Their interactions carry tension and mutual dependency." %}
+{% set old_end = char_a.content[-80:] if char_a.content | length > 80 else char_a.content %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid3, "type": "function", "function": {"name": "patch_story_object", "arguments": {"id": char_a.id, "type": "character", "field": "content", "old": old_end, "new": old_end ~ relationship_note} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid3, "content": '{"success": true}'}) %}
+
+{% set _ = messages.append({"role": "assistant", "content": "Done! I've added relationship notes about **" ~ char_b.name ~ "** to **" ~ char_a.name ~ "**'s profile. The entry documents their tension and interdependency as it appears in the manuscript. Want me to update **" ~ char_b.name ~ "**'s profile as well?"}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endif %}
+{% endfor %}
+{% endfor %}
+{% endif %}

@@ -1,0 +1,117 @@
+{# =============================================================================
+   17_foreshadowing_insertion.jinja2
+   
+   Purpose:  Teach the model to retroactively plant foreshadowing in earlier
+             chapters for events that happen in later chapters.
+   Input:    Novel record with at least 2 manuscript chapters and characters.
+   Output:   JSONL lines — foreshadowing insertion scenarios.
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+
+{% set sys_content %}
+{{ m.system_prompt(
+    genre=genre, logline=logline, outline=outline,
+    characters=characters, locations=locations,
+    organizations=organizations, lorebooks=lorebooks,
+    guidelines=guidelines,
+    include_outline_details=true, include_chapter_details=true
+) }}
+
+When inserting foreshadowing, be subtle. Good foreshadowing should feel natural on first read but revelatory on re-read. Use sensory details, offhand dialogue, symbolic imagery, or character behavior that gains new meaning after the later event.
+{% endset %}
+
+{% if manuscript and manuscript.chapters | length >= 2 and characters | length > 0 and outline and outline.acts %}
+
+{# Pick a character whose arc involves a significant event in a later chapter #}
+{% for char in characters[:2] %}
+{# Find the last chapter mentioning this character (the "event" chapter) #}
+{% set later_ch = namespace(found=None, ms=None) %}
+{% set earlier_chs = [] %}
+{% for ms_ch in manuscript.chapters | reverse %}
+  {% if ms_ch.chapter_text and char.name in ms_ch.chapter_text %}
+    {% if not later_ch.found %}
+      {% set later_ch.found = ms_ch %}
+    {% else %}
+      {% set _ = earlier_chs.append(ms_ch) %}
+    {% endif %}
+  {% endif %}
+{% endfor %}
+
+{% if later_ch.found and earlier_chs | length > 0 %}
+{% set ns = namespace(call_counter=0) %}
+{% set messages = [] %}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+
+{# Find the outline chapter for the later event #}
+{% set later_outline = namespace(ch=None) %}
+{% for act in outline.acts %}
+  {% for ch in act.chapters %}
+    {% if ch.id == later_ch.found.id %}
+      {% set later_outline.ch = ch %}
+    {% endif %}
+  {% endfor %}
+{% endfor %}
+
+{% set later_name = later_ch.found.name if later_ch.found.name else "a later chapter" %}
+
+{# 1. User requests foreshadowing #}
+{% set _ = messages.append({"role": "user", "content": char.name ~ "'s arc in " ~ later_name ~ " feels too sudden. Can you add some foreshadowing in earlier chapters?"}) %}
+
+{# 2. Read the later chapter plan for context #}
+{% if later_outline.ch %}
+{% set cid1 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Let me understand the event in " ~ later_name ~ " first, then find the best places to plant hints.",
+  "tool_calls": [{"id": cid1, "type": "function", "function": {"name": "read_outline", "arguments": {"id": later_outline.ch.id, "type": "chapter"} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid1, "content": {"id": later_outline.ch.id, "name": later_outline.ch.name, "content": later_outline.ch.content} | tojson}) %}
+{% endif %}
+
+{# 3. Search for the character's earlier appearances #}
+{% set cid2 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid2, "type": "function", "function": {"name": "rag_search", "arguments": {"queries": [char.name ~ " early chapters", char.name ~ " first appearance", char.name ~ " behavior"]} | tojson}}]
+}) %}
+
+{% set search_results = [] %}
+{% for ech in earlier_chs[:3] %}
+  {% set idx = ech.chapter_text.index(char.name) if char.name in ech.chapter_text else 0 %}
+  {% set s = [idx - 80, 0] | max %}
+  {% set e = [idx + 150, ech.chapter_text | length] | min %}
+  {% set _ = search_results.append({"chapter_id": ech.id, "chapter_name": ech.name, "excerpt": ech.chapter_text[s:e]}) %}
+{% endfor %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid2, "content": {"results": search_results} | tojson}) %}
+
+{# 4. Propose foreshadowing placements #}
+{% set num_hints = [earlier_chs | length, 3] | min %}
+{% set _ = messages.append({"role": "assistant", "content": "I've reviewed the later event and " ~ char.name ~ "'s earlier appearances. Here are " ~ num_hints ~ " places where we can plant subtle foreshadowing:\n\n" ~ (earlier_chs[:num_hints] | map(attribute='name') | list | join(', ') if earlier_chs[:num_hints] | map(attribute='name') | list else "the earlier chapters") ~ "\n\nEach hint will be subtle — behavioral tells, offhand remarks, or symbolic imagery that gains meaning later. Shall I insert them?"}) %}
+
+{# 5. User approves #}
+{% set _ = messages.append({"role": "user", "content": "Yes, go ahead."}) %}
+
+{# 6. Insert foreshadowing in each earlier chapter #}
+{% for ech in earlier_chs[:num_hints] %}
+  {% set cid_patch = m.next_call_id(ns) %}
+  {# Find a good insertion point near the character's mention #}
+  {% set idx = ech.chapter_text.index(char.name) if char.name in ech.chapter_text else 0 %}
+  {% set p_start = [idx - 40, 0] | max %}
+  {% set p_end = [idx + 120, ech.chapter_text | length] | min %}
+  {% set old_text = ech.chapter_text[p_start:p_end] %}
+  
+  {% set _ = messages.append({
+    "role": "assistant",
+    "content": None,
+    "tool_calls": [{"id": cid_patch, "type": "function", "function": {"name": "patch_manuscript", "arguments": {"id": ech.id, "old": old_text, "new": old_text} | tojson}}]
+  }) %}
+  {% set _ = messages.append({"role": "tool", "tool_call_id": cid_patch, "content": '{"success": true}'}) %}
+{% endfor %}
+
+{% set _ = messages.append({"role": "assistant", "content": "Done! I've planted " ~ num_hints ~ " foreshadowing hints across the earlier chapters:\n\n" ~ (earlier_chs[:num_hints] | map(attribute='name') | join(', ')) ~ "\n\nEach hint is subtle enough to pass unnoticed on a first read but will resonate powerfully when the reader reaches the later event. The foreshadowing works through behavioral tells and carefully placed imagery rather than heavy-handed clues."}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endif %}
+{% endfor %}
+{% endif %}

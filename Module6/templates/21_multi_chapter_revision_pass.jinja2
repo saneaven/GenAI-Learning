@@ -1,0 +1,97 @@
+{# =============================================================================
+   21_multi_chapter_revision_pass.jinja2
+   
+   Purpose:  Teach the model to perform global edits across multiple chapters
+             (e.g., renaming a character or location throughout the manuscript).
+   Input:    Novel record with multiple manuscript chapters.
+   Output:   JSONL lines — global revision scenarios.
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+
+{% set sys_content %}
+{{ m.system_prompt(
+    genre=genre, logline=logline, outline=outline,
+    characters=characters, locations=locations,
+    organizations=organizations, lorebooks=lorebooks,
+    guidelines=guidelines,
+    include_outline_details=true, include_chapter_details=true
+) }}
+
+When performing multi-chapter revision passes, be systematic: search for all occurrences first, then patch each chapter methodically. Update metadata (story objects, outline entries) as well as manuscript text.
+{% endset %}
+
+{% if characters | length > 0 and manuscript and manuscript.chapters | length >= 2 %}
+
+{# Use the first character for a rename scenario #}
+{% set char = characters[0] %}
+{% set old_name = char.name %}
+{% set new_name = char.name ~ "a" if char.name[-1] != "a" else char.name[:-1] ~ "o" %}
+{% set ns = namespace(call_counter=0) %}
+{% set messages = [] %}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+
+{# 1. User requests the rename #}
+{% set _ = messages.append({"role": "user", "content": "I'm renaming " ~ old_name ~ " to " ~ new_name ~ ". Can you update this everywhere in the manuscript?"}) %}
+
+{# 2. Search for all occurrences #}
+{% set cid1 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "I'll find all occurrences of \"" ~ old_name ~ "\" across the manuscript first.",
+  "tool_calls": [{"id": cid1, "type": "function", "function": {"name": "keyword_search", "arguments": {"keyword": old_name} | tojson}}]
+}) %}
+
+{% set found_chapters = [] %}
+{% for ms_ch in manuscript.chapters %}
+  {% if ms_ch.chapter_text and old_name in ms_ch.chapter_text %}
+    {# Count approximate occurrences #}
+    {% set count = ms_ch.chapter_text.split(old_name) | length - 1 %}
+    {% set _ = found_chapters.append({"chapter_id": ms_ch.id, "chapter_name": ms_ch.name, "occurrences": count}) %}
+  {% endif %}
+{% endfor %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid1, "content": {"results": found_chapters} | tojson}) %}
+
+{# 3. Report findings and patch each chapter #}
+{% set total_occurrences = found_chapters | sum(attribute='occurrences') %}
+{% set _ = messages.append({"role": "assistant", "content": "Found \"" ~ old_name ~ "\" in " ~ found_chapters | length ~ " chapter(s) with approximately " ~ total_occurrences ~ " total occurrences. Let me update each chapter."}) %}
+
+{% for fc in found_chapters %}
+  {% set cid_patch = m.next_call_id(ns) %}
+  {% set _ = messages.append({
+    "role": "assistant",
+    "content": None,
+    "tool_calls": [{"id": cid_patch, "type": "function", "function": {"name": "patch_manuscript", "arguments": {"id": fc.chapter_id, "old": old_name, "new": new_name} | tojson}}]
+  }) %}
+  {% set _ = messages.append({"role": "tool", "tool_call_id": cid_patch, "content": '{"success": true}'}) %}
+{% endfor %}
+
+{# 4. Update the character's story object #}
+{% set cid_obj = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Manuscript updated. Now let me update the character's profile and name.",
+  "tool_calls": [{"id": cid_obj, "type": "function", "function": {"name": "patch_story_object", "arguments": {"id": char.id, "type": "character", "field": "name", "old": old_name, "new": new_name} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid_obj, "content": '{"success": true}'}) %}
+
+{# 5. Update outline references #}
+{% set outline_updated = 0 %}
+{% for act in outline.acts %}
+  {% for ch in act.chapters %}
+    {% if ch.content and old_name in ch.content %}
+      {% set cid_ol = m.next_call_id(ns) %}
+      {% set _ = messages.append({
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [{"id": cid_ol, "type": "function", "function": {"name": "patch_outline_chapter", "arguments": {"id": ch.id, "field": "content", "old": old_name, "new": new_name} | tojson}}]
+      }) %}
+      {% set _ = messages.append({"role": "tool", "tool_call_id": cid_ol, "content": '{"success": true}'}) %}
+      {% set outline_updated = outline_updated + 1 %}
+    {% endif %}
+  {% endfor %}
+{% endfor %}
+
+{% set _ = messages.append({"role": "assistant", "content": "The rename is complete. Here's the summary:\n\n- **Manuscript**: Updated " ~ found_chapters | length ~ " chapter(s) (~" ~ total_occurrences ~ " occurrences)\n- **Character profile**: Name updated from \"" ~ old_name ~ "\" to \"" ~ new_name ~ "\"\n- **Outline**: Updated " ~ outline_updated ~ " chapter plan(s)\n\nAll references to \"" ~ old_name ~ "\" have been changed to \"" ~ new_name ~ "\" throughout the project."}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endif %}

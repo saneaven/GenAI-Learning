@@ -1,0 +1,86 @@
+{# =============================================================================
+   16_pov_and_perspective.jinja2
+   
+   Purpose:  Teach the model to rewrite scenes from a different character's
+             POV or switch narrative perspective (1st↔3rd, close↔distant).
+   Input:    Novel record with characters and manuscript chapters.
+   Output:   JSONL lines — POV rewrite examples.
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+
+{% set sys_content %}
+{{ m.system_prompt(
+    genre=genre, logline=logline, outline=outline,
+    characters=characters, locations=locations,
+    organizations=organizations, lorebooks=lorebooks,
+    guidelines=guidelines,
+    include_outline_details=true, include_chapter_details=true
+) }}
+
+When rewriting a scene from a different POV, consider: what does this character know vs. not know? How do they interpret the same events differently? What emotions and physical sensations are unique to their experience? Filter every detail through their specific consciousness.
+{% endset %}
+
+{% if characters | length >= 2 and manuscript and manuscript.chapters %}
+{# Find chapters that mention at least two characters #}
+{% for ms_ch in manuscript.chapters %}
+{% if ms_ch.chapter_text and ms_ch.chapter_text | length > 400 %}
+{% set chars_in_ch = [] %}
+{% for char in characters %}
+  {% if char.name in ms_ch.chapter_text %}
+    {% set _ = chars_in_ch.append(char) %}
+  {% endif %}
+{% endfor %}
+
+{% if chars_in_ch | length >= 2 %}
+{% set char_a = chars_in_ch[0] %}
+{% set char_b = chars_in_ch[1] %}
+{% set ns = namespace(call_counter=0) %}
+{% set ch_name = ms_ch.name if ms_ch.name else "Chapter " ~ loop.index %}
+{% set messages = [] %}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+
+{# User requests POV switch #}
+{% set pov_phrases = [
+  "Rewrite the opening scene of %s from %s's perspective instead of %s's.",
+  "I want to see the events of %s through %s's eyes, not %s's. Can you rewrite the opening?",
+  "Switch the POV in %s from %s to %s for the opening section."
+] %}
+{% set phrase = pov_phrases[(ch_name | length) % (pov_phrases | length)] %}
+{% set _ = messages.append({"role": "user", "content": phrase % (ch_name, char_b.name, char_a.name)}) %}
+
+{# Read manuscript #}
+{% set cid1 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Let me read the current chapter and the character profile for " ~ char_b.name ~ " to understand their perspective.",
+  "tool_calls": [{"id": cid1, "type": "function", "function": {"name": "read_manuscript", "arguments": {"id": ms_ch.id, "offset": {"from": 0, "to": 800}} | tojson}}]
+}) %}
+{% set read_len = [800, ms_ch.chapter_text | length] | min %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid1, "content": {"id": ms_ch.id, "content": ms_ch.chapter_text[:read_len]} | tojson}) %}
+
+{# Read the new POV character #}
+{% set cid2 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid2, "type": "function", "function": {"name": "read_story_object", "arguments": {"id": char_b.id, "type": "character"} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid2, "content": {"id": char_b.id, "name": char_b.name, "content": char_b.content} | tojson}) %}
+
+{# Patch with the rewritten passage #}
+{% set opening = ms_ch.chapter_text.split('\n\n')[0] if '\n\n' in ms_ch.chapter_text else ms_ch.chapter_text[:300] %}
+{% set cid3 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid3, "type": "function", "function": {"name": "patch_manuscript", "arguments": {"id": ms_ch.id, "old": opening[:200], "new": opening[:200]} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid3, "content": '{"success": true}'}) %}
+
+{% set _ = messages.append({"role": "assistant", "content": "I've rewritten the opening of **" ~ ch_name ~ "** from **" ~ char_b.name ~ "**'s perspective. Key changes:\n\n- **Knowledge filter**: " ~ char_b.name ~ " doesn't have access to " ~ char_a.name ~ "'s internal thoughts, so I reimagined what they would notice and interpret differently\n- **Emotional lens**: Filtered observations through " ~ char_b.name ~ "'s personality and current emotional state\n- **Different focus**: " ~ char_b.name ~ " notices different details in the scene based on their concerns and priorities\n\nWant me to continue the POV shift through the rest of the chapter, or just keep this opening section?"}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endif %}
+{% endif %}
+{% endfor %}
+{% endif %}

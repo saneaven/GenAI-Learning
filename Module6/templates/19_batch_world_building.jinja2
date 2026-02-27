@@ -1,0 +1,102 @@
+{# =============================================================================
+   19_batch_world_building.jinja2
+   
+   Purpose:  Teach the model to create multiple related story objects in a
+             single session (e.g., an organization with its members and HQ).
+   Input:    Novel record with organizations, characters, and locations that
+             are thematically related.
+   Output:   JSONL lines — batch creation scenarios grouping related elements.
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+
+{% set sys_content %}
+{{ m.system_prompt(
+    genre=genre, logline=logline, outline=outline,
+    characters=characters, locations=locations,
+    organizations=organizations, lorebooks=lorebooks,
+    guidelines=guidelines,
+    include_outline_details=true, include_chapter_details=false
+) }}
+
+When creating related story elements in batch, establish cross-references between them. An organization should reference its members and headquarters; characters should reference their organization affiliation; locations should reference who occupies them.
+{% endset %}
+
+{% if organizations is defined and organizations | length > 0 %}
+{% for org in organizations %}
+{% set ns = namespace(call_counter=0) %}
+{% set messages = [] %}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+
+{# Find characters and locations potentially related to this org #}
+{% set related_chars = [] %}
+{% for char in characters %}
+  {% if org.name in char.content or (char.content and org.name | lower in char.content | lower) %}
+    {% set _ = related_chars.append(char) %}
+  {% endif %}
+{% endfor %}
+{# If no explicit references, take the next 1-2 characters as "members" for training #}
+{% if related_chars | length == 0 and characters | length > 0 %}
+  {% set _ = related_chars.append(characters[(loop.index0 * 2) % characters | length]) %}
+  {% if characters | length > 1 %}
+    {% set _ = related_chars.append(characters[(loop.index0 * 2 + 1) % characters | length]) %}
+  {% endif %}
+{% endif %}
+
+{% set related_loc = namespace(found=None) %}
+{% for loc in locations %}
+  {% if org.name in loc.content or (loc.content and org.name | lower in loc.content | lower) %}
+    {% set related_loc.found = loc %}
+  {% endif %}
+{% endfor %}
+{% if not related_loc.found and locations | length > 0 %}
+  {% set related_loc.found = locations[loop.index0 % locations | length] %}
+{% endif %}
+
+{# 1. User requests batch creation #}
+{% set _ = messages.append({"role": "user", "content": "I need to flesh out " ~ org.name ~ ". Create the organization, their headquarters, and their key members."}) %}
+
+{# 2. Create the organization #}
+{% set cid1 = m.next_call_id(ns) %}
+{% set org_args = {"type": "organization", "name": org.name, "content": org.content} %}
+{% if org.description %}{% set org_args = org_args | combine({"description": org.description}) %}{% endif %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Let's build out " ~ org.name ~ " systematically — organization first, then headquarters, then key personnel.",
+  "tool_calls": [{"id": cid1, "type": "function", "function": {"name": "create_story_object", "arguments": org_args | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid1, "content": '{"success": true, "id": "' ~ org.id ~ '"}'}) %}
+
+{# 3. Create headquarters location #}
+{% if related_loc.found %}
+{% set cid2 = m.next_call_id(ns) %}
+{% set loc_content = related_loc.found.content ~ "\n\nServes as the headquarters of " ~ org.name ~ "." %}
+{% set loc_args = {"type": "location", "name": related_loc.found.name, "content": loc_content} %}
+{% if related_loc.found.description %}{% set loc_args = loc_args | combine({"description": related_loc.found.description ~ " (HQ of " ~ org.name ~ ")"}) %}{% endif %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Organization created. Now the headquarters.",
+  "tool_calls": [{"id": cid2, "type": "function", "function": {"name": "create_story_object", "arguments": loc_args | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid2, "content": '{"success": true, "id": "' ~ related_loc.found.id ~ '"}'}) %}
+{% endif %}
+
+{# 4. Create member characters #}
+{% for char in related_chars[:3] %}
+  {% set cid_char = m.next_call_id(ns) %}
+  {% set char_content = char.content ~ "\n\nAffiliated with " ~ org.name ~ "." %}
+  {% set char_args = {"type": "character", "name": char.name, "content": char_content} %}
+  {% if char.description %}{% set char_args = char_args | combine({"description": char.description}) %}{% endif %}
+  {% set _ = messages.append({
+    "role": "assistant",
+    "content": None,
+    "tool_calls": [{"id": cid_char, "type": "function", "function": {"name": "create_story_object", "arguments": char_args | tojson}}]
+  }) %}
+  {% set _ = messages.append({"role": "tool", "tool_call_id": cid_char, "content": '{"success": true, "id": "' ~ char.id ~ '"}'}) %}
+{% endfor %}
+
+{# 5. Summary #}
+{% set _ = messages.append({"role": "assistant", "content": "**" ~ org.name ~ "** is fully set up! Here's the complete faction:\n\n- **Organization**: " ~ org.name ~ " — " ~ (org.description if org.description else org.content[:80]) ~ "\n" ~ ("- **Headquarters**: " ~ related_loc.found.name ~ "\n" if related_loc.found else "") ~ "- **Members**: " ~ related_chars[:3] | map(attribute='name') | join(', ') ~ "\n\nAll elements cross-reference each other. Characters' profiles note their affiliation with " ~ org.name ~ (", and the headquarters location references the organization" if related_loc.found else "") ~ ". Want to add more members or refine any of these entries?"}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endfor %}
+{% endif %}

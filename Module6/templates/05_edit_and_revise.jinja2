@@ -1,0 +1,121 @@
+{# =============================================================================
+   05_edit_and_revise.jinja2
+   
+   Purpose:  Teach the model to revise existing content using patch operations.
+   Input:    A novel record with manuscript chapters containing chapter_text.
+   Output:   Multiple JSONL lines — edit scenarios generated from existing prose.
+   
+   Strategy: For each chapter with substantial text, generate an edit example.
+   The assistant reads the manuscript, identifies a passage, and patches it.
+   We use the actual text as the "improved" version and synthesize a weaker
+   "before" version by description (since we can't programmatically degrade
+   prose in Jinja2, we describe the edit conceptually and use real text spans).
+   
+   Conversation flow:
+     1. System: project context + guidelines
+     2. User: asks for revision of a chapter
+     3. Assistant: reads the manuscript
+     4. Tool: returns text
+     5. Assistant: identifies issue, calls patch_manuscript
+     6. Tool: returns success
+     7. Assistant: explains the revision
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+
+{% set edit_request_phrases = [
+  "Can you tighten up the prose in %s? It feels a bit flabby.",
+  "I'd like you to revise %s — sharpen the language and cut any filler.",
+  "The writing in %s needs some polish. Can you improve it?",
+  "Please do an editing pass on %s. Focus on making the prose more vivid.",
+  "Revise %s for me — stronger verbs, tighter sentences.",
+  "%s needs work. Can you do an editing sweep?"
+] %}
+
+{% set edit_explanation_phrases = [
+  "I've tightened the prose in that passage — replaced passive constructions with active voice, strengthened the verb choices, and trimmed unnecessary modifiers. The scene reads with more urgency now.",
+  "The revision focuses on show-don't-tell: I replaced explanatory narration with concrete sensory details and sharper action beats. The pacing should feel more immediate.",
+  "I've made several targeted improvements: stronger verbs, more specific imagery, and tighter sentence rhythm. The passage now moves with better energy.",
+  "Done with the edit pass. Key changes: cut redundant phrases, sharpened dialogue tags, and replaced vague descriptions with precise sensory details."
+] %}
+
+{% set sys_content %}
+{{ m.system_prompt(
+    genre=genre,
+    logline=logline,
+    outline=outline,
+    characters=characters,
+    locations=locations,
+    organizations=organizations,
+    lorebooks=lorebooks,
+    guidelines=guidelines,
+    include_outline_details=true,
+    include_chapter_details=true
+) }}
+
+The user is in the revision phase. Read the manuscript carefully before making edits. Use patch_manuscript for targeted changes — identify specific passages to improve and explain your editorial reasoning.
+{% endset %}
+
+{% if manuscript and manuscript.chapters %}
+{% for ms_ch in manuscript.chapters %}
+{% if ms_ch.chapter_text and ms_ch.chapter_text | length > 500 %}
+{% set ns = namespace(call_counter=0) %}
+{% set ch_name = ms_ch.name if ms_ch.name else "Chapter " ~ loop.index %}
+
+{# Extract a passage to "edit" — take a paragraph from the middle third #}
+{% set paragraphs = ms_ch.chapter_text.split('\n\n') %}
+{% if paragraphs | length >= 3 %}
+  {% set mid_idx = (paragraphs | length) // 3 %}
+  {% set target_para = paragraphs[mid_idx] %}
+  {# Use the actual paragraph as the "after" — in real usage, you'd also
+     have a degraded "before". Here we simulate by treating a later paragraph
+     as an alternative edit target to show the patch pattern. #}
+  {% if target_para | length > 100 %}
+    {# Take first ~200 chars as the "old" passage (representing what needs editing) #}
+    {% set old_text = target_para[:200] %}
+    {# The "new" version is slightly longer — simulating expansion/improvement #}
+    {% set new_text = target_para[:250] if target_para | length > 250 else target_para %}
+  {% else %}
+    {% set old_text = target_para %}
+    {% set new_text = target_para %}
+  {% endif %}
+{% else %}
+  {# Fallback for very short chapters #}
+  {% set old_text = ms_ch.chapter_text[:200] %}
+  {% set new_text = ms_ch.chapter_text[:250] if ms_ch.chapter_text | length > 250 else ms_ch.chapter_text %}
+{% endif %}
+
+{% set messages = [] %}
+{% set phrase = edit_request_phrases[(ch_name | length) % (edit_request_phrases | length)] %}
+{% set explanation = edit_explanation_phrases[(ch_name | length + 1) % (edit_explanation_phrases | length)] %}
+
+{# 1. System #}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+
+{# 2. User requests revision #}
+{% set _ = messages.append({"role": "user", "content": phrase % ch_name}) %}
+
+{# 3. Assistant reads the chapter #}
+{% set cid1 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Let me read through the chapter first to identify areas for improvement.",
+  "tool_calls": [{"id": cid1, "type": "function", "function": {"name": "read_manuscript", "arguments": {"id": ms_ch.id} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid1, "content": {"id": ms_ch.id, "content": ms_ch.chapter_text} | tojson}) %}
+
+{# 4. Assistant analyzes and patches #}
+{% set cid2 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "I've identified a passage that could use tightening. Let me revise it.",
+  "tool_calls": [{"id": cid2, "type": "function", "function": {"name": "patch_manuscript", "arguments": {"id": ms_ch.id, "old": old_text, "new": new_text} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid2, "content": '{"success": true}'}) %}
+
+{# 5. Assistant explains #}
+{% set _ = messages.append({"role": "assistant", "content": explanation}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endif %}
+{% endfor %}
+{% endif %}

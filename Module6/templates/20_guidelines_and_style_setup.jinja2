@@ -1,0 +1,70 @@
+{# =============================================================================
+   20_guidelines_and_style_setup.jinja2
+   
+   Purpose:  Teach the model to establish and refine writing guidelines/author
+             notes based on user style preferences.
+   Input:    Novel record with guidelines.authorNote.
+   Output:   One JSONL line — conversation where user discusses style preferences
+             and assistant translates them into structured guidelines.
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+
+{% set sys_content %}
+{{ m.system_prompt(
+    genre=genre, logline=logline, outline=outline,
+    characters=characters, locations=locations,
+    organizations=organizations, lorebooks=lorebooks,
+    guidelines=None,
+    include_outline_details=false, include_chapter_details=false
+) }}
+
+Help the user define their writing style guidelines. Translate their casual style preferences into structured, actionable rules that will guide consistent prose across the entire novel.
+{% endset %}
+
+{% if guidelines and guidelines.authorNote %}
+{% set ns = namespace(call_counter=0) %}
+{% set messages = [] %}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+
+{# 1. User describes style preferences casually #}
+{% set style_phrases = [
+  "I want the writing style to be distinctive. Think: %s. Can you set up the guidelines?",
+  "Let's establish the writing style. I'm going for something like: %s",
+  "Before we start writing, let's nail down the style. Here's what I want: %s",
+  "I need writing guidelines for this project. My vision for the voice: %s"
+] %}
+{% set phrase = style_phrases[(guidelines.authorNote | length) % (style_phrases | length)] %}
+{# Use first ~100 chars of authorNote as the casual description #}
+{% set casual_desc = guidelines.authorNote[:120] if guidelines.authorNote | length > 120 else guidelines.authorNote %}
+{% set _ = messages.append({"role": "user", "content": phrase % casual_desc}) %}
+
+{# 2. Assistant creates the guidelines #}
+{% set cid1 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Great vision for the style! Let me translate that into structured writing guidelines.",
+  "tool_calls": [{"id": cid1, "type": "function", "function": {"name": "replace_guidelines", "arguments": {"id": guidelines.id, "authorNote": guidelines.authorNote} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid1, "content": '{"success": true}'}) %}
+
+{# 3. Assistant reads back for approval #}
+{% set _ = messages.append({"role": "assistant", "content": "I've set up the writing guidelines. Here's what I've established:\n\n" ~ guidelines.authorNote ~ "\n\nThese will guide all prose writing in the project. Do you want to adjust anything?"}) %}
+
+{# 4. User requests a refinement #}
+{% set _ = messages.append({"role": "user", "content": "That's mostly good, but can you emphasize brevity more? I want shorter paragraphs."}) %}
+
+{# 5. Patch the guidelines #}
+{% set cid2 = m.next_call_id(ns) %}
+{% set old_tail = guidelines.authorNote[-80:] if guidelines.authorNote | length > 80 else guidelines.authorNote %}
+{% set new_tail = old_tail ~ "\n\nKeep paragraphs short — ideally 2-4 sentences. Break long paragraphs at natural turning points." %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Absolutely — short paragraphs can really drive pacing. Let me add that.",
+  "tool_calls": [{"id": cid2, "type": "function", "function": {"name": "patch_guidelines", "arguments": {"id": guidelines.id, "field": "authorNote", "old": old_tail, "new": new_tail} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid2, "content": '{"success": true}'}) %}
+
+{% set _ = messages.append({"role": "assistant", "content": "Updated! The guidelines now emphasize short paragraphs (2-4 sentences) alongside the other style rules. This will keep the prose tight and propulsive. Ready to start writing?"}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endif %}

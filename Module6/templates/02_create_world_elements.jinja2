@@ -1,0 +1,160 @@
+{# =============================================================================
+   02_create_world_elements.jinja2
+   
+   Purpose:  Teach the model to create characters, locations, organizations,
+             and lorebook entries one at a time, with progressive context.
+   Input:    A novel record with populated characters, locations, organizations,
+             and/or lorebooks arrays.
+   Output:   Multiple JSONL lines — one training example per story object.
+             Each successive example includes previously-created elements in the
+             system prompt, teaching the model to build context progressively.
+   
+   Conversation flow (per element):
+     1. System: base prompt + project info + already-created elements
+     2. User: requests creation of the element (varied phrasing)
+     3. Assistant: calls create_story_object
+     4. Tool: returns success with generated ID
+     5. Assistant: confirms and contextualizes the element
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+
+{# --- Phrase banks for user requests -------------------------------------- #}
+{% set char_phrases = [
+  "I need a new character: %s. Here's what I'm thinking: %s",
+  "Let's add a character called %s. %s",
+  "Create a character named %s — %s",
+  "I want to introduce %s into the story. %s",
+  "Add %s as a character. Background: %s",
+  "New character: %s. %s",
+  "Time to create %s. Here's their deal: %s",
+  "I've been thinking about a character named %s. %s"
+] %}
+
+{% set location_phrases = [
+  "I need a location: %s. %s",
+  "Let's create a setting called %s. %s",
+  "Add a new location — %s. Here's the idea: %s",
+  "Create %s as a location in the story. %s",
+  "New place: %s. Description: %s",
+  "I want to establish %s as a key location. %s"
+] %}
+
+{% set org_phrases = [
+  "I need an organization: %s. %s",
+  "Create a group called %s. %s",
+  "Add an organization — %s. Here's the concept: %s",
+  "Let's add %s as a faction/organization. %s",
+  "New organization: %s. %s"
+] %}
+
+{% set lore_phrases = [
+  "I need a lorebook entry for %s. %s",
+  "Add a lore entry: %s. Details: %s",
+  "Create a lorebook item called %s. %s",
+  "Let's document some world-building — %s. %s",
+  "New lore entry: %s. %s"
+] %}
+
+{% set confirm_phrases = [
+  "Done! I've created **%s** and added them to the project. %s",
+  "**%s** is now part of the project. %s",
+  "Created **%s** successfully. %s",
+  "I've added **%s** to the project. %s"
+] %}
+
+{% set context_notes_char = [
+  "They should add an interesting dynamic to the story.",
+  "This character will bring some great tension to the narrative.",
+  "Their arc has a lot of potential given the story's themes.",
+  "I can see how they'll interact with the existing cast.",
+  ""
+] %}
+
+{% set context_notes_other = [
+  "This will help ground the story's world.",
+  "A solid addition to the project's world-building.",
+  "This enriches the setting nicely.",
+  ""
+] %}
+
+{# --- Accumulator for progressive context -------------------------------- #}
+{% set created = namespace(characters=[], locations=[], organizations=[], lorebooks=[]) %}
+
+{# --- Iterate over all element types and produce one example each --------- #}
+{# We process them in a natural world-building order: characters first,
+   then locations, organizations, and finally lorebook entries. #}
+
+{% set all_elements = [] %}
+{% if characters is defined and characters %}
+  {% for c in characters %}
+    {% set _ = all_elements.append({"type": "character", "obj": c, "phrases": char_phrases, "notes": context_notes_char}) %}
+  {% endfor %}
+{% endif %}
+{% if locations is defined and locations %}
+  {% for l in locations %}
+    {% set _ = all_elements.append({"type": "location", "obj": l, "phrases": location_phrases, "notes": context_notes_other}) %}
+  {% endfor %}
+{% endif %}
+{% if organizations is defined and organizations %}
+  {% for o in organizations %}
+    {% set _ = all_elements.append({"type": "organization", "obj": o, "phrases": org_phrases, "notes": context_notes_other}) %}
+  {% endfor %}
+{% endif %}
+{% if lorebooks is defined and lorebooks %}
+  {% for lb in lorebooks %}
+    {% set _ = all_elements.append({"type": "lorebook", "obj": lb, "phrases": lore_phrases, "notes": context_notes_other}) %}
+  {% endfor %}
+{% endif %}
+
+{% for elem in all_elements %}
+{% set ns = namespace(call_counter=0) %}
+{% set obj = elem.obj %}
+{% set etype = elem.type %}
+{% set phrases = elem.phrases %}
+{% set notes = elem.notes %}
+{% set cid = m.next_call_id(ns) %}
+
+{# Pick phrase deterministically based on element name length #}
+{% set phrase = phrases[(obj.name | length) % (phrases | length)] %}
+{% set confirm = confirm_phrases[(obj.name | length + loop.index) % (confirm_phrases | length)] %}
+{% set note = notes[(obj.name | length) % (notes | length)] %}
+
+{# Build the system prompt with progressive context #}
+{% set sys_content %}
+{{ m.system_prompt(
+    genre=genre,
+    logline=logline,
+    outline=outline,
+    characters=created.characters,
+    locations=created.locations,
+    organizations=created.organizations,
+    lorebooks=created.lorebooks,
+    include_outline_details=false,
+    include_chapter_details=false
+) }}
+
+The user is in the world-building phase, creating story elements for their novel.
+{% endset %}
+
+{# Build the user message #}
+{% set desc_text = obj.description if obj.description is defined and obj.description else obj.content[:120] ~ "..." if obj.content | length > 120 else obj.content %}
+{% set user_text = phrase % (obj.name, desc_text) %}
+
+{# Build the tool call arguments #}
+{% set args = {"type": etype, "name": obj.name, "content": obj.content} %}
+{% if obj.description is defined and obj.description %}
+  {% set args = args | combine({"description": obj.description}) %}
+{% endif %}
+
+{"messages": [{"role": "system", "content": {{ sys_content | tojson }}}, {{ m.user_msg(user_text) }}, {{ m.single_tool_call(cid, "create_story_object", args) }}, {{ m.success_result(cid, '"id": "' ~ obj.id ~ '"') }}, {{ m.assistant_msg(confirm % (obj.name, note)) }}]}
+{# Update the progressive context accumulators #}
+{% if etype == "character" %}
+  {% set _ = created.characters.append(obj) %}
+{% elif etype == "location" %}
+  {% set _ = created.locations.append(obj) %}
+{% elif etype == "organization" %}
+  {% set _ = created.organizations.append(obj) %}
+{% elif etype == "lorebook" %}
+  {% set _ = created.lorebooks.append(obj) %}
+{% endif %}
+{% endfor %}

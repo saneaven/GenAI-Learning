@@ -1,0 +1,113 @@
+{# =============================================================================
+   12_dialogue_scene_writing.jinja2
+   
+   Purpose:  Teach the model to write dialogue-heavy scenes with natural speech
+             patterns per character. Reads character profiles to understand voice.
+   Input:    Novel record with characters, outline chapters, and manuscript.
+   Output:   JSONL lines — one per chapter that involves character dialogue.
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+
+{% set sys_content %}
+{{ m.system_prompt(
+    genre=genre, logline=logline, outline=outline,
+    characters=characters, locations=locations,
+    organizations=organizations, lorebooks=lorebooks,
+    guidelines=guidelines,
+    include_outline_details=true, include_chapter_details=true
+) }}
+
+When writing dialogue, give each character a distinct voice that reflects their personality, background, and emotional state. Read character profiles carefully before writing their speech. Balance dialogue with action beats, internal thoughts, and setting details.
+{% endset %}
+
+{% if characters | length >= 2 and outline and outline.acts and manuscript and manuscript.chapters %}
+
+{# Find chapters whose plans mention dialogue-related keywords #}
+{% for act in outline.acts %}
+{% for ch in act.chapters %}
+{% set has_dialogue_cue = false %}
+{% set dialogue_keywords = ["dialogue", "confrontation", "conversation", "argument", "discuss", "confront", "speak", "talk", "reveal", "confess", "interrogat", "negotiate", "debate"] %}
+{% for kw in dialogue_keywords %}
+  {% if kw in (ch.content | lower) %}
+    {% set has_dialogue_cue = true %}
+  {% endif %}
+{% endfor %}
+
+{# Also check if two+ character names appear in the chapter plan #}
+{% set chars_in_plan = [] %}
+{% for char in characters %}
+  {% if char.name in ch.content %}
+    {% set _ = chars_in_plan.append(char) %}
+  {% endif %}
+{% endfor %}
+
+{% if (has_dialogue_cue or chars_in_plan | length >= 2) and chars_in_plan | length >= 2 %}
+{% set char_a = chars_in_plan[0] %}
+{% set char_b = chars_in_plan[1] %}
+{% set ns = namespace(call_counter=0) %}
+
+{# Find the corresponding manuscript chapter #}
+{% set ms_ch = namespace(found=None) %}
+{% for mc in manuscript.chapters %}
+  {% if mc.id == ch.id and mc.chapter_text %}
+    {% set ms_ch.found = mc %}
+  {% endif %}
+{% endfor %}
+
+{% if ms_ch.found %}
+{% set messages = [] %}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+
+{% set dialogue_phrases = [
+  "Write the confrontation scene between %s and %s in %s.",
+  "I need the dialogue scene between %s and %s for %s. Make their voices distinct.",
+  "Draft the scene where %s and %s interact in %s. Focus on authentic dialogue.",
+  "Write the %s and %s exchange in %s — I want to hear their distinct voices."
+] %}
+{% set phrase = dialogue_phrases[((char_a.name | length) + (char_b.name | length)) % (dialogue_phrases | length)] %}
+{% set _ = messages.append({"role": "user", "content": phrase % (char_a.name, char_b.name, ch.name)}) %}
+
+{# Read character A profile #}
+{% set cid1 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Let me review both characters' profiles to capture their voices accurately.",
+  "tool_calls": [{"id": cid1, "type": "function", "function": {"name": "read_story_object", "arguments": {"id": char_a.id, "type": "character"} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid1, "content": {"id": char_a.id, "name": char_a.name, "content": char_a.content} | tojson}) %}
+
+{# Read character B profile #}
+{% set cid2 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid2, "type": "function", "function": {"name": "read_story_object", "arguments": {"id": char_b.id, "type": "character"} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid2, "content": {"id": char_b.id, "name": char_b.name, "content": char_b.content} | tojson}) %}
+
+{# Read the chapter plan #}
+{% set cid3 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid3, "type": "function", "function": {"name": "read_outline", "arguments": {"id": ch.id, "type": "chapter"} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid3, "content": {"id": ch.id, "name": ch.name, "content": ch.content} | tojson}) %}
+
+{# Write the chapter with dialogue — using actual chapter_text #}
+{% set cid4 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid4, "type": "function", "function": {"name": "replace_manuscript", "arguments": {"id": ms_ch.found.id, "content": ms_ch.found.chapter_text} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid4, "content": '{"success": true}'}) %}
+
+{% set _ = messages.append({"role": "assistant", "content": "Done — **" ~ ch.name ~ "** is written with the dialogue scene between **" ~ char_a.name ~ "** and **" ~ char_b.name ~ "**.\n\nI differentiated their voices by drawing on their profiles: " ~ char_a.name ~ "'s speech reflects their " ~ (char_a.description[:60] if char_a.description else "established personality") ~ ", while " ~ char_b.name ~ " speaks in a way that conveys their " ~ (char_b.description[:60] if char_b.description else "distinct character traits") ~ ". The scene balances dialogue with action beats and interiority. Would you like to adjust any of the dialogue?"}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endif %}
+{% endif %}
+{% endfor %}
+{% endfor %}
+{% endif %}

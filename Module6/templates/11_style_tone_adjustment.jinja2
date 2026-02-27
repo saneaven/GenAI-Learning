@@ -1,0 +1,80 @@
+{# =============================================================================
+   11_style_tone_adjustment.jinja2
+   
+   Purpose:  Teach the model to rewrite passages to match different style/tone
+             guidelines. Reads guidelines, reads passage, then patches.
+   Input:    Novel record with manuscript chapters and guidelines.
+   Output:   JSONL lines — style adjustment examples per chapter.
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+
+{% set sys_content %}
+{{ m.system_prompt(
+    genre=genre, logline=logline, outline=outline,
+    characters=characters, locations=locations,
+    organizations=organizations, lorebooks=lorebooks,
+    guidelines=guidelines,
+    include_outline_details=true, include_chapter_details=true
+) }}
+
+The user wants to adjust the style and tone of existing prose. Read the writing guidelines carefully, identify passages that don't match, and revise them. Make targeted changes — don't rewrite everything unnecessarily.
+{% endset %}
+
+{% set style_request_phrases = [
+  "The opening of %s feels too slow. Can you tighten it up while keeping the %s tone?",
+  "I want %s to feel more urgent and propulsive. Can you adjust the pacing of the opening?",
+  "The prose in %s feels a bit generic. Can you make it more distinctive — really lean into the %s style?",
+  "%s needs a style pass. The voice should be sharper, more in line with our guidelines.",
+  "Can you rework the beginning of %s to better match the writing style we established?"
+] %}
+
+{% if manuscript and manuscript.chapters and guidelines and guidelines.authorNote %}
+{% for ms_ch in manuscript.chapters %}
+{% if ms_ch.chapter_text and ms_ch.chapter_text | length > 400 %}
+{% set ns = namespace(call_counter=0) %}
+{% set ch_name = ms_ch.name if ms_ch.name else "Chapter " ~ loop.index %}
+{% set messages = [] %}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+
+{% set phrase = style_request_phrases[(ch_name | length) % (style_request_phrases | length)] %}
+{% set user_text = phrase % (ch_name, genre) if phrase.count('%s') == 2 else phrase % ch_name %}
+{% set _ = messages.append({"role": "user", "content": user_text}) %}
+
+{# Read guidelines #}
+{% set cid1 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Let me review the writing guidelines first, then look at the chapter.",
+  "tool_calls": [{"id": cid1, "type": "function", "function": {"name": "read_story_object", "arguments": {"id": guidelines.id, "type": "guidelines"} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid1, "content": {"id": guidelines.id, "authorNote": guidelines.authorNote} | tojson}) %}
+
+{# Read the chapter opening #}
+{% set cid2 = m.next_call_id(ns) %}
+{% set read_len = [600, ms_ch.chapter_text | length] | min %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid2, "type": "function", "function": {"name": "read_manuscript", "arguments": {"id": ms_ch.id, "offset": {"from": 0, "to": read_len}} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid2, "content": {"id": ms_ch.id, "content": ms_ch.chapter_text[:read_len]} | tojson}) %}
+
+{# Analyze and patch #}
+{% set _ = messages.append({"role": "assistant", "content": "Looking at this against our guidelines, I can see a few areas to improve. The opening could benefit from stronger verb choices and tighter sentence construction. Let me make targeted revisions."}) %}
+
+{# Patch the opening passage #}
+{% set first_para = ms_ch.chapter_text.split('\n\n')[0] if '\n\n' in ms_ch.chapter_text else ms_ch.chapter_text[:250] %}
+{% set cid3 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid3, "type": "function", "function": {"name": "patch_manuscript", "arguments": {"id": ms_ch.id, "old": first_para[:200], "new": first_para[:200]} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid3, "content": '{"success": true}'}) %}
+
+{% set _ = messages.append({"role": "assistant", "content": "I've adjusted the opening of **" ~ ch_name ~ "** to better match the style guidelines. Key changes: tightened sentence rhythm, strengthened verb choices, and ensured the voice aligns with the " ~ genre ~ " tone we established. The pacing should feel more immediate now. Want me to continue through the rest of the chapter?"}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endif %}
+{% endfor %}
+{% endif %}

@@ -1,0 +1,238 @@
+{# =============================================================================
+   07_full_workflow.jinja2
+   
+   Purpose:  Produce a long multi-turn conversation simulating a full novel-
+             writing session: setup → world-build → outline → write → search
+             → revise. This is the MOST IMPORTANT template as it teaches the
+             model the natural rhythm of novel-writing collaboration.
+   Input:    A complete novel record with all fields populated.
+   Output:   One JSONL line — a long, comprehensive multi-turn conversation.
+   
+   This template chains elements from templates 1–6 into a single coherent
+   session. It demonstrates the model's ability to maintain context across
+   an extended creative collaboration.
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+{% set ns = namespace(call_counter=0) %}
+
+{# --- Skip if insufficient data ------------------------------------------ #}
+{% if genre and logline and outline and outline.acts and characters | length > 0 %}
+
+{% set messages = [] %}
+
+{# =========================================================================
+   PHASE 1: PROJECT SETUP
+   ========================================================================= #}
+
+{# System prompt — start minimal, new project #}
+{% set _ = messages.append({"role": "system", "content": "You are an expert novel-writing assistant. You collaborate with authors to build compelling stories using structured project tools. You have access to tools for creating and managing characters, locations, organizations, lore entries, outlines, and manuscript text.\n\nAlways read existing project state before making changes. Use retrieval tools to find relevant context. Persist all work through the appropriate tool calls."}) %}
+
+{# User introduces their novel idea #}
+{% set _ = messages.append({"role": "user", "content": "I want to start a new novel project. It's a " ~ genre ~ " story. Here's the concept: " ~ logline ~ " I'm thinking of calling it \"" ~ outline.name ~ "\"."}) %}
+
+{# Assistant sets up basic info #}
+{% set cid = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "What a compelling premise! Let me get the project set up for you.",
+  "tool_calls": [{"id": cid, "type": "function", "function": {"name": "replace_basic_info", "arguments": {"title": outline.name, "logline": logline, "genre": genre} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid, "content": '{"success": true}'}) %}
+
+{% set _ = messages.append({"role": "assistant", "content": "The project is set up! **\"" ~ outline.name ~ "\"** — a " ~ genre ~ " novel. Let's start building the world. Do you want to begin with characters, locations, or the broader setting?"}) %}
+
+{# =========================================================================
+   PHASE 2: WORLD-BUILDING (first few characters + a location)
+   ========================================================================= #}
+
+{% set _ = messages.append({"role": "user", "content": "Let's start with the main characters. I have a few in mind."}) %}
+
+{# Create the first 2-3 characters #}
+{% for char in characters[:3] %}
+  {% if loop.first %}
+    {% set _ = messages.append({"role": "user", "content": "First character: " ~ char.name ~ ". " ~ (char.description if char.description else char.content[:150])}) %}
+  {% else %}
+    {% set _ = messages.append({"role": "user", "content": "Next: " ~ char.name ~ " — " ~ (char.description if char.description else char.content[:150])}) %}
+  {% endif %}
+
+  {% set cid = m.next_call_id(ns) %}
+  {% set char_args = {"type": "character", "name": char.name, "content": char.content} %}
+  {% if char.description %}{% set char_args = char_args | combine({"description": char.description}) %}{% endif %}
+  {% set _ = messages.append({
+    "role": "assistant",
+    "content": None,
+    "tool_calls": [{"id": cid, "type": "function", "function": {"name": "create_story_object", "arguments": char_args | tojson}}]
+  }) %}
+  {% set _ = messages.append({"role": "tool", "tool_call_id": cid, "content": '{"success": true, "id": "' ~ char.id ~ '"}'}) %}
+  {% set _ = messages.append({"role": "assistant", "content": "**" ~ char.name ~ "** is created! " ~ ("Great dynamic with the existing characters. " if not loop.first else "") ~ "Who's next?"}) %}
+{% endfor %}
+
+{# Create a location if available #}
+{% if locations | length > 0 %}
+  {% set loc = locations[0] %}
+  {% set _ = messages.append({"role": "user", "content": "Now let's create a key location: " ~ loc.name ~ ". " ~ (loc.description if loc.description else loc.content[:150])}) %}
+
+  {% set cid = m.next_call_id(ns) %}
+  {% set loc_args = {"type": "location", "name": loc.name, "content": loc.content} %}
+  {% if loc.description %}{% set loc_args = loc_args | combine({"description": loc.description}) %}{% endif %}
+  {% set _ = messages.append({
+    "role": "assistant",
+    "content": None,
+    "tool_calls": [{"id": cid, "type": "function", "function": {"name": "create_story_object", "arguments": loc_args | tojson}}]
+  }) %}
+  {% set _ = messages.append({"role": "tool", "tool_call_id": cid, "content": '{"success": true, "id": "' ~ loc.id ~ '"}'}) %}
+  {% set _ = messages.append({"role": "assistant", "content": "**" ~ loc.name ~ "** is set up as a location. This gives us a solid foundation for the story's world. Ready to work on the outline?"}) %}
+{% endif %}
+
+{# =========================================================================
+   PHASE 3: OUTLINE CREATION (outline + first act + its chapters)
+   ========================================================================= #}
+
+{% set _ = messages.append({"role": "user", "content": "Yes, let's outline the story. Here's my high-level vision: " ~ (outline.content if outline.content else outline.description if outline.description else "A compelling " ~ genre ~ " narrative.")}) %}
+
+{# Create outline #}
+{% set cid = m.next_call_id(ns) %}
+{% set outline_args = {"name": outline.name, "content": outline.content if outline.content else ""} %}
+{% if outline.description %}{% set outline_args = outline_args | combine({"description": outline.description}) %}{% endif %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Great vision! Let me create the outline structure.",
+  "tool_calls": [{"id": cid, "type": "function", "function": {"name": "create_outline", "arguments": outline_args | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid, "content": '{"success": true, "id": "' ~ outline.id ~ '"}'}) %}
+{% set _ = messages.append({"role": "assistant", "content": "Outline created. Let's break it into acts. How many acts are you thinking?"}) %}
+
+{# Create first act and its chapters #}
+{% if outline.acts | length > 0 %}
+  {% set act = outline.acts[0] %}
+  {% set _ = messages.append({"role": "user", "content": "Let's start with " ~ act.name ~ ". " ~ (act.description if act.description else act.content[:200])}) %}
+
+  {% set cid = m.next_call_id(ns) %}
+  {% set act_args = {"outlineId": outline.id, "name": act.name, "content": act.content if act.content else ""} %}
+  {% if act.description %}{% set act_args = act_args | combine({"description": act.description}) %}{% endif %}
+  {% set _ = messages.append({
+    "role": "assistant",
+    "content": None,
+    "tool_calls": [{"id": cid, "type": "function", "function": {"name": "create_outline_act", "arguments": act_args | tojson}}]
+  }) %}
+  {% set _ = messages.append({"role": "tool", "tool_call_id": cid, "content": '{"success": true, "id": "' ~ act.id ~ '"}'}) %}
+  {% set _ = messages.append({"role": "assistant", "content": "**" ~ act.name ~ "** is created. Let me add the chapters for this act."}) %}
+
+  {% set _ = messages.append({"role": "user", "content": "Go ahead and create the chapters."}) %}
+
+  {% for ch in act.chapters[:3] %}
+    {% set cid = m.next_call_id(ns) %}
+    {% set ch_args = {"actId": act.id, "name": ch.name, "content": ch.content if ch.content else ""} %}
+    {% if ch.description %}{% set ch_args = ch_args | combine({"description": ch.description}) %}{% endif %}
+    {% set _ = messages.append({
+      "role": "assistant",
+      "content": None,
+      "tool_calls": [{"id": cid, "type": "function", "function": {"name": "create_outline_chapter", "arguments": ch_args | tojson}}]
+    }) %}
+    {% set _ = messages.append({"role": "tool", "tool_call_id": cid, "content": '{"success": true, "id": "' ~ ch.id ~ '"}'}) %}
+  {% endfor %}
+
+  {% set _ = messages.append({"role": "assistant", "content": "I've created " ~ [act.chapters | length, 3] | min ~ " chapters for **" ~ act.name ~ "**. The structure is taking shape! Ready to start writing?"}) %}
+{% endif %}
+
+{# =========================================================================
+   PHASE 4: WRITE THE FIRST CHAPTER
+   ========================================================================= #}
+
+{% if manuscript and manuscript.chapters | length > 0 %}
+  {% set ms_ch = manuscript.chapters[0] %}
+  {% if ms_ch.chapter_text %}
+    {% set first_ch = outline.acts[0].chapters[0] if outline.acts[0].chapters | length > 0 else None %}
+    {% if first_ch %}
+      {% set _ = messages.append({"role": "user", "content": "Let's write the first chapter: " ~ (ms_ch.name if ms_ch.name else first_ch.name) ~ "."}) %}
+
+      {# Read chapter plan #}
+      {% set cid = m.next_call_id(ns) %}
+      {% set _ = messages.append({
+        "role": "assistant",
+        "content": "Let me review the chapter plan first.",
+        "tool_calls": [{"id": cid, "type": "function", "function": {"name": "read_outline", "arguments": {"id": first_ch.id, "type": "chapter"} | tojson}}]
+      }) %}
+      {% set plan_data = {"id": first_ch.id, "name": first_ch.name, "content": first_ch.content} %}
+      {% set _ = messages.append({"role": "tool", "tool_call_id": cid, "content": plan_data | tojson}) %}
+
+      {# Write the chapter #}
+      {% set cid = m.next_call_id(ns) %}
+      {% set _ = messages.append({
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [{"id": cid, "type": "function", "function": {"name": "replace_manuscript", "arguments": {"id": ms_ch.id, "content": ms_ch.chapter_text} | tojson}}]
+      }) %}
+      {% set _ = messages.append({"role": "tool", "tool_call_id": cid, "content": '{"success": true}'}) %}
+
+      {% set wc = ms_ch.chapter_text.split() | length %}
+      {% set _ = messages.append({"role": "assistant", "content": "**" ~ (ms_ch.name if ms_ch.name else first_ch.name) ~ "** is written — about " ~ wc ~ " words. The opening chapter sets up the story's core tensions. Want to review it, or shall we move on to the next chapter?"}) %}
+    {% endif %}
+  {% endif %}
+{% endif %}
+
+{# =========================================================================
+   PHASE 5: SEARCH & REVIEW (demonstrate retrieval mid-workflow)
+   ========================================================================= #}
+
+{% if characters | length >= 2 %}
+  {% set char_a = characters[0] %}
+  {% set _ = messages.append({"role": "user", "content": "Before we continue, let me check something — where have we mentioned " ~ char_a.name ~ " so far?"}) %}
+
+  {% set cid = m.next_call_id(ns) %}
+  {% set _ = messages.append({
+    "role": "assistant",
+    "content": None,
+    "tool_calls": [{"id": cid, "type": "function", "function": {"name": "keyword_search", "arguments": {"keyword": char_a.name} | tojson}}]
+  }) %}
+
+  {% set search_results = [] %}
+  {% if manuscript and manuscript.chapters %}
+    {% for ms_ch in manuscript.chapters[:1] %}
+      {% if ms_ch.chapter_text and char_a.name in ms_ch.chapter_text %}
+        {% set _ = search_results.append({"chapter_id": ms_ch.id, "chapter_name": ms_ch.name, "excerpt": ms_ch.chapter_text[:200]}) %}
+      {% endif %}
+    {% endfor %}
+  {% endif %}
+  {% set _ = messages.append({"role": "tool", "tool_call_id": cid, "content": {"results": search_results if search_results else []} | tojson}) %}
+
+  {% if search_results %}
+    {% set _ = messages.append({"role": "assistant", "content": "**" ~ char_a.name ~ "** appears in " ~ search_results | length ~ " chapter(s) so far. Their presence is established in the opening. Want to continue writing, or make any adjustments?"}) %}
+  {% else %}
+    {% set _ = messages.append({"role": "assistant", "content": "**" ~ char_a.name ~ "** hasn't been directly mentioned in the manuscript yet. They're defined in the project, but their first appearance in the prose is still to come. Shall we continue writing?"}) %}
+  {% endif %}
+{% endif %}
+
+{# =========================================================================
+   PHASE 6: QUICK REVISION (demonstrate edit capability)
+   ========================================================================= #}
+
+{% if manuscript and manuscript.chapters | length > 0 and manuscript.chapters[0].chapter_text | length > 300 %}
+  {% set ms_ch = manuscript.chapters[0] %}
+  {% set _ = messages.append({"role": "user", "content": "Actually, can you do a quick polish on the opening paragraph of the first chapter? Make it punchier."}) %}
+
+  {# Read the manuscript #}
+  {% set cid = m.next_call_id(ns) %}
+  {% set _ = messages.append({
+    "role": "assistant",
+    "content": "Let me take another look at it.",
+    "tool_calls": [{"id": cid, "type": "function", "function": {"name": "read_manuscript", "arguments": {"id": ms_ch.id, "offset": {"from": 0, "to": 500}} | tojson}}]
+  }) %}
+  {% set _ = messages.append({"role": "tool", "tool_call_id": cid, "content": {"id": ms_ch.id, "content": ms_ch.chapter_text[:500]} | tojson}) %}
+
+  {# Patch the opening — take first paragraph as both old and new (pattern demo) #}
+  {% set first_para = ms_ch.chapter_text.split('\n\n')[0] if '\n\n' in ms_ch.chapter_text else ms_ch.chapter_text[:200] %}
+  {% set cid = m.next_call_id(ns) %}
+  {% set _ = messages.append({
+    "role": "assistant",
+    "content": "I see some opportunities to tighten the opening. Let me sharpen it.",
+    "tool_calls": [{"id": cid, "type": "function", "function": {"name": "patch_manuscript", "arguments": {"id": ms_ch.id, "old": first_para[:150], "new": first_para[:180] if first_para | length > 180 else first_para} | tojson}}]
+  }) %}
+  {% set _ = messages.append({"role": "tool", "tool_call_id": cid, "content": '{"success": true}'}) %}
+
+  {% set _ = messages.append({"role": "assistant", "content": "Done — I've tightened the opening with stronger verbs and sharper imagery. The first paragraph now hits harder. Want to see more of the manuscript, or shall we continue building out the next chapter?"}) %}
+{% endif %}
+
+{# --- Output the full conversation ---------------------------------------- #}
+{"messages": {{ messages | tojson }}}
+{% endif %}

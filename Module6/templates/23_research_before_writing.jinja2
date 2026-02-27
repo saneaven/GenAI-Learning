@@ -1,0 +1,149 @@
+{# =============================================================================
+   23_research_before_writing.jinja2
+   
+   Purpose:  Teach the model to thoroughly research existing project state
+             before producing new content — the "look before you leap" pattern.
+   Input:    Novel record with outline, characters, locations, and manuscript.
+   Output:   JSONL lines — one per chapter, showing comprehensive research.
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+
+{% set sys_content %}
+{{ m.system_prompt(
+    genre=genre, logline=logline, outline=outline,
+    characters=characters, locations=locations,
+    organizations=organizations, lorebooks=lorebooks,
+    guidelines=guidelines,
+    include_outline_details=true, include_chapter_details=false
+) }}
+
+Before writing any new content, always research the existing project state thoroughly. Read the chapter plan, relevant character profiles, location details, and the end of the previous chapter for continuity. Synthesize everything into a clear briefing before proceeding.
+{% endset %}
+
+{% if outline and outline.acts %}
+{% set all_chapters = [] %}
+{% for act in outline.acts %}
+  {% for ch in act.chapters %}
+    {% set _ = all_chapters.append({"ch": ch, "act": act}) %}
+  {% endfor %}
+{% endfor %}
+
+{% for ch_data in all_chapters %}
+{% set ch = ch_data.ch %}
+{% set act = ch_data.act %}
+{% set ns = namespace(call_counter=0) %}
+{% set messages = [] %}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+
+{# 1. User asks for a briefing #}
+{% set brief_phrases = [
+  "I'm about to write %s. What do I need to know?",
+  "Before I write %s, give me a comprehensive briefing on all the context I need.",
+  "Research everything relevant for %s — characters, locations, previous chapter. What should I have in mind?",
+  "Prep me for writing %s. Pull up everything relevant."
+] %}
+{% set phrase = brief_phrases[(ch.name | length) % (brief_phrases | length)] %}
+{% set _ = messages.append({"role": "user", "content": phrase % ch.name}) %}
+
+{# 2. Read the chapter plan #}
+{% set cid1 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Let me gather everything you'll need. Starting with the chapter plan.",
+  "tool_calls": [{"id": cid1, "type": "function", "function": {"name": "read_outline", "arguments": {"id": ch.id, "type": "chapter"} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid1, "content": {"id": ch.id, "name": ch.name, "content": ch.content} | tojson}) %}
+
+{# 3. Read character profiles for characters mentioned in the plan #}
+{% set chars_in_plan = [] %}
+{% for char in characters %}
+  {% if char.name in ch.content %}
+    {% set _ = chars_in_plan.append(char) %}
+  {% endif %}
+{% endfor %}
+
+{% for char in chars_in_plan[:3] %}
+  {% set cid_char = m.next_call_id(ns) %}
+  {% set _ = messages.append({
+    "role": "assistant",
+    "content": None,
+    "tool_calls": [{"id": cid_char, "type": "function", "function": {"name": "read_story_object", "arguments": {"id": char.id, "type": "character"} | tojson}}]
+  }) %}
+  {% set _ = messages.append({"role": "tool", "tool_call_id": cid_char, "content": {"id": char.id, "name": char.name, "description": char.description if char.description else "", "content": char.content} | tojson}) %}
+{% endfor %}
+
+{# 4. Read locations mentioned in the plan #}
+{% set locs_in_plan = [] %}
+{% for loc in locations %}
+  {% if loc.name in ch.content %}
+    {% set _ = locs_in_plan.append(loc) %}
+  {% endif %}
+{% endfor %}
+
+{% for loc in locs_in_plan[:2] %}
+  {% set cid_loc = m.next_call_id(ns) %}
+  {% set _ = messages.append({
+    "role": "assistant",
+    "content": None,
+    "tool_calls": [{"id": cid_loc, "type": "function", "function": {"name": "read_story_object", "arguments": {"id": loc.id, "type": "location"} | tojson}}]
+  }) %}
+  {% set _ = messages.append({"role": "tool", "tool_call_id": cid_loc, "content": {"id": loc.id, "name": loc.name, "content": loc.content} | tojson}) %}
+{% endfor %}
+
+{# 5. Read the end of the previous chapter for continuity #}
+{% if loop.index0 > 0 and manuscript and manuscript.chapters %}
+  {% set prev_idx = loop.index0 - 1 %}
+  {% if prev_idx < manuscript.chapters | length and manuscript.chapters[prev_idx].chapter_text %}
+    {% set prev_ch = manuscript.chapters[prev_idx] %}
+    {% set cid_prev = m.next_call_id(ns) %}
+    {% set text_len = prev_ch.chapter_text | length %}
+    {% set from_pos = [text_len - 600, 0] | max %}
+    {% set _ = messages.append({
+      "role": "assistant",
+      "content": None,
+      "tool_calls": [{"id": cid_prev, "type": "function", "function": {"name": "read_manuscript", "arguments": {"id": prev_ch.id, "offset": {"from": from_pos, "to": text_len}} | tojson}}]
+    }) %}
+    {% set _ = messages.append({"role": "tool", "tool_call_id": cid_prev, "content": {"id": prev_ch.id, "content": prev_ch.chapter_text[from_pos:]} | tojson}) %}
+  {% endif %}
+{% endif %}
+
+{# 6. Search for relevant lorebook entries #}
+{% if lorebooks | length > 0 %}
+  {% set cid_rag = m.next_call_id(ns) %}
+  {% set _ = messages.append({
+    "role": "assistant",
+    "content": None,
+    "tool_calls": [{"id": cid_rag, "type": "function", "function": {"name": "rag_search", "arguments": {"queries": [ch.name ~ " context", act.name ~ " events"]} | tojson}}]
+  }) %}
+  {% set lore_results = [] %}
+  {% for entry in lorebooks %}
+    {% if entry.name | lower in ch.content | lower or (entry.description and entry.description | lower in ch.content | lower) %}
+      {% set _ = lore_results.append({"source": "lorebook:" ~ entry.id, "name": entry.name, "excerpt": entry.content[:200]}) %}
+    {% endif %}
+  {% endfor %}
+  {% set _ = messages.append({"role": "tool", "tool_call_id": cid_rag, "content": {"results": lore_results if lore_results else []} | tojson}) %}
+{% endif %}
+
+{# 7. Synthesize the briefing #}
+{% set briefing %}Here's your comprehensive briefing for **{{ ch.name }}**:
+
+**Chapter Plan**: {{ ch.description if ch.description else ch.content[:150] }}
+
+**Characters involved**: {{ chars_in_plan | map(attribute='name') | join(', ') if chars_in_plan else "No specific characters identified in the plan" }}
+{% for char in chars_in_plan[:3] %}
+- **{{ char.name }}**: {{ char.description if char.description else char.content[:80] }}
+{% endfor %}
+
+{% if locs_in_plan | length > 0 %}**Locations**: {{ locs_in_plan | map(attribute='name') | join(', ') }}{% endif %}
+
+{% if loop.index0 > 0 %}**Continuity note**: The previous chapter ends with the narrative at a specific point — make sure the opening of this chapter flows naturally from there.{% endif %}
+
+{% if lore_results is defined and lore_results | length > 0 %}**Relevant lore**: {{ lore_results | map(attribute='name') | join(', ') }}{% endif %}
+
+You're ready to write. Want me to draft the chapter, or do you want to write it yourself with this context in mind?{% endset %}
+
+{% set _ = messages.append({"role": "assistant", "content": briefing}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endfor %}
+{% endif %}

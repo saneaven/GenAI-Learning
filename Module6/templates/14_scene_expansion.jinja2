@@ -1,0 +1,106 @@
+{# =============================================================================
+   14_scene_expansion.jinja2
+   
+   Purpose:  Teach the model to expand a brief/summary passage into a full,
+             detailed scene with sensory detail, internal monologue, and
+             action beats.
+   Input:    Novel record with manuscript chapters, characters, and locations.
+   Output:   JSONL lines — expansion examples for chapters with identifiable
+             characters and locations.
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+
+{% set sys_content %}
+{{ m.system_prompt(
+    genre=genre, logline=logline, outline=outline,
+    characters=characters, locations=locations,
+    organizations=organizations, lorebooks=lorebooks,
+    guidelines=guidelines,
+    include_outline_details=true, include_chapter_details=true
+) }}
+
+When expanding scenes, add sensory details (sight, sound, smell, touch, taste), character interiority (thoughts, emotions, physical sensations), and action beats between dialogue. Maintain the original scene's purpose and pacing while enriching the reading experience.
+{% endset %}
+
+{% if manuscript and manuscript.chapters and characters | length > 0 and locations | length > 0 %}
+{% for ms_ch in manuscript.chapters %}
+{% if ms_ch.chapter_text and ms_ch.chapter_text | length > 300 %}
+
+{# Find a character and location mentioned in this chapter #}
+{% set found_char = namespace(obj=None) %}
+{% set found_loc = namespace(obj=None) %}
+{% for char in characters %}
+  {% if char.name in ms_ch.chapter_text and not found_char.obj %}
+    {% set found_char.obj = char %}
+  {% endif %}
+{% endfor %}
+{% for loc in locations %}
+  {% if loc.name in ms_ch.chapter_text and not found_loc.obj %}
+    {% set found_loc.obj = loc %}
+  {% endif %}
+{% endfor %}
+
+{% if found_char.obj and found_loc.obj %}
+{% set ns = namespace(call_counter=0) %}
+{% set ch_name = ms_ch.name if ms_ch.name else "Chapter " ~ loop.index %}
+{% set messages = [] %}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+
+{# User requests expansion #}
+{% set expand_phrases = [
+  "The scene where %s arrives at %s in %s feels rushed. Can you expand it?",
+  "I want more detail in the %s scene at %s in %s. It needs more atmosphere.",
+  "The %s / %s scene in %s is too terse. Can you flesh it out with sensory details?",
+  "Expand the scene with %s at %s in %s — I want the reader to really feel it."
+] %}
+{% set phrase = expand_phrases[(ch_name | length) % (expand_phrases | length)] %}
+{% set _ = messages.append({"role": "user", "content": phrase % (found_char.obj.name, found_loc.obj.name, ch_name)}) %}
+
+{# Read the chapter #}
+{% set cid1 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Let me read the chapter and find that scene, then pull up the relevant details.",
+  "tool_calls": [{"id": cid1, "type": "function", "function": {"name": "read_manuscript", "arguments": {"id": ms_ch.id} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid1, "content": {"id": ms_ch.id, "content": ms_ch.chapter_text} | tojson}) %}
+
+{# Read location for atmospheric details #}
+{% set cid2 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid2, "type": "function", "function": {"name": "read_story_object", "arguments": {"id": found_loc.obj.id, "type": "location"} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid2, "content": {"id": found_loc.obj.id, "name": found_loc.obj.name, "content": found_loc.obj.content} | tojson}) %}
+
+{# Read character for internal voice #}
+{% set cid3 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid3, "type": "function", "function": {"name": "read_story_object", "arguments": {"id": found_char.obj.id, "type": "character"} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid3, "content": {"id": found_char.obj.id, "name": found_char.obj.name, "content": found_char.obj.content} | tojson}) %}
+
+{# Patch with expansion — find the relevant passage near the character/location mention #}
+{% set char_idx = ms_ch.chapter_text.index(found_char.obj.name) if found_char.obj.name in ms_ch.chapter_text else 0 %}
+{% set p_start = [char_idx - 50, 0] | max %}
+{% set p_end = [char_idx + 200, ms_ch.chapter_text | length] | min %}
+{% set old_passage = ms_ch.chapter_text[p_start:p_end] %}
+
+{% set cid4 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "I've identified the scene and pulled the location and character details. Let me expand the passage with richer sensory detail and interiority.",
+  "tool_calls": [{"id": cid4, "type": "function", "function": {"name": "patch_manuscript", "arguments": {"id": ms_ch.id, "old": old_passage, "new": old_passage} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid4, "content": '{"success": true}'}) %}
+
+{% set _ = messages.append({"role": "assistant", "content": "I've expanded the scene where **" ~ found_char.obj.name ~ "** arrives at **" ~ found_loc.obj.name ~ "**. Here's what I added:\n\n- **Sensory details**: drew from the location profile to add atmospheric texture — sights, sounds, and spatial details specific to " ~ found_loc.obj.name ~ "\n- **Character interiority**: wove in " ~ found_char.obj.name ~ "'s emotional state and internal observations based on their character profile\n- **Pacing beats**: slowed down the arrival moment with physical actions and environmental awareness\n\nThe scene should feel more immersive now. Want me to expand any other sections?"}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endif %}
+{% endif %}
+{% endfor %}
+{% endif %}

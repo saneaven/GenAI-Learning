@@ -1,0 +1,125 @@
+{# =============================================================================
+   24_error_recovery.jinja2
+   
+   Purpose:  Teach the model to handle and recover from failed tool calls
+             (not found, invalid ID, content too long, etc.).
+   Input:    Novel record with characters and manuscript chapters.
+   Output:   JSONL lines — error recovery scenarios.
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+
+{% set sys_content %}
+{{ m.system_prompt(
+    genre=genre, logline=logline, outline=outline,
+    characters=characters, locations=locations,
+    organizations=organizations, lorebooks=lorebooks,
+    guidelines=guidelines,
+    include_outline_details=true, include_chapter_details=true
+) }}
+
+When tool calls fail, stay calm and recover gracefully. Use search tools to find correct IDs, adjust parameters, or try alternative approaches. Never give up on the user's request — always find a way to accomplish the task.
+{% endset %}
+
+{% if characters | length > 0 %}
+{# --- Scenario 1: Object not found, recover via search -------------------- #}
+{% set char = characters[0] %}
+{% set ns = namespace(call_counter=0) %}
+{% set messages = [] %}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+
+{% set _ = messages.append({"role": "user", "content": "Update " ~ char.name ~ "'s backstory — I want to add more detail about their childhood."}) %}
+
+{# Attempt with a wrong ID #}
+{% set cid1 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Let me pull up " ~ char.name ~ "'s profile first.",
+  "tool_calls": [{"id": cid1, "type": "function", "function": {"name": "read_story_object", "arguments": {"id": "wrong_id_123", "type": "character"} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid1, "content": '{"error": "Object not found: wrong_id_123"}'}) %}
+
+{# Recover via keyword search #}
+{% set cid2 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Let me search for the correct ID.",
+  "tool_calls": [{"id": cid2, "type": "function", "function": {"name": "keyword_search", "arguments": {"keyword": char.name} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid2, "content": {"results": [{"type": "character", "id": char.id, "name": char.name, "excerpt": char.content[:100]}]} | tojson}) %}
+
+{# Retry with correct ID #}
+{% set cid3 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Found it. Let me retrieve the profile.",
+  "tool_calls": [{"id": cid3, "type": "function", "function": {"name": "read_story_object", "arguments": {"id": char.id, "type": "character"} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid3, "content": {"id": char.id, "name": char.name, "content": char.content} | tojson}) %}
+
+{# Proceed with the update #}
+{% set cid4 = m.next_call_id(ns) %}
+{% set old_end = char.content[-60:] if char.content | length > 60 else char.content %}
+{% set childhood_addition = "\n\nChildhood: Grew up in difficult circumstances that shaped their worldview and resilience. These early experiences inform their adult motivations and relationships." %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Got it. Now let me add the childhood backstory detail.",
+  "tool_calls": [{"id": cid4, "type": "function", "function": {"name": "patch_story_object", "arguments": {"id": char.id, "type": "character", "field": "content", "old": old_end, "new": old_end ~ childhood_addition} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid4, "content": '{"success": true}'}) %}
+
+{% set _ = messages.append({"role": "assistant", "content": "Done! I've added childhood backstory detail to **" ~ char.name ~ "**'s profile. The new section covers their early experiences and how those shape their adult personality. Want me to add more specific details?"}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endif %}
+
+{# --- Scenario 2: Content too long, split the write ----------------------- #}
+{% if manuscript and manuscript.chapters | length > 0 %}
+{% set ms_ch = manuscript.chapters[0] %}
+{% if ms_ch.chapter_text and ms_ch.chapter_text | length > 500 %}
+{% set ns = namespace(call_counter=0) %}
+{% set messages = [] %}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+
+{% set ch_name = ms_ch.name if ms_ch.name else "Chapter 1" %}
+{% set _ = messages.append({"role": "user", "content": "Write " ~ ch_name ~ " in full."}) %}
+
+{# First attempt fails due to content length #}
+{% set cid1 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid1, "type": "function", "function": {"name": "replace_manuscript", "arguments": {"id": ms_ch.id, "content": ms_ch.chapter_text} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid1, "content": '{"error": "Content exceeds maximum length of 15000 characters. Received: ' ~ ms_ch.chapter_text | length ~ ' characters."}'}) %}
+
+{# Split and retry #}
+{% set half = (ms_ch.chapter_text | length) // 2 %}
+{# Find a paragraph break near the halfway point #}
+{% set split_point = ms_ch.chapter_text[:half].rfind('\n\n') %}
+{% set split_point = split_point if split_point > 0 else half %}
+{% set first_half = ms_ch.chapter_text[:split_point] %}
+{% set second_half = ms_ch.chapter_text[split_point:] %}
+
+{% set cid2 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "The chapter is quite long. Let me write it in two parts.",
+  "tool_calls": [{"id": cid2, "type": "function", "function": {"name": "replace_manuscript", "arguments": {"id": ms_ch.id, "content": first_half} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid2, "content": '{"success": true}'}) %}
+
+{# Append the second half via patch #}
+{% set cid3 = m.next_call_id(ns) %}
+{% set last_para = first_half[-120:] if first_half | length > 120 else first_half %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid3, "type": "function", "function": {"name": "patch_manuscript", "arguments": {"id": ms_ch.id, "old": last_para, "new": last_para ~ second_half} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid3, "content": '{"success": true}'}) %}
+
+{% set _ = messages.append({"role": "assistant", "content": "**" ~ ch_name ~ "** is fully written. I had to split it into two parts due to length, but the full chapter (" ~ ms_ch.chapter_text.split() | length ~ " words) is now saved. Ready to continue?"}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endif %}
+{% endif %}

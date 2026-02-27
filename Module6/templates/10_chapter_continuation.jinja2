@@ -1,0 +1,110 @@
+{# =============================================================================
+   10_chapter_continuation.jinja2
+   
+   Purpose:  Teach the model to continue writing a chapter from a specific
+             midpoint (partial draft scenario).
+   Input:    Novel record with manuscript chapters that have substantial text.
+   Output:   JSONL lines — one per chapter with enough text to split.
+   
+   Strategy: Split chapter_text at a natural paragraph break (~40-60% through).
+   The first half is the "existing draft"; the second half is what the model
+   writes as a continuation.
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+
+{% set sys_content_tpl %}
+{{ m.system_prompt(
+    genre=genre, logline=logline, outline=outline,
+    characters=characters, locations=locations,
+    organizations=organizations, lorebooks=lorebooks,
+    guidelines=guidelines,
+    include_outline_details=true, include_chapter_details=true
+) }}
+
+The user has a partially written chapter and wants you to continue from where they left off. Read the existing draft and the chapter plan to maintain continuity, then append new prose.
+{% endset %}
+
+{% if manuscript and manuscript.chapters and outline and outline.acts %}
+{% for ms_ch in manuscript.chapters %}
+{% if ms_ch.chapter_text and ms_ch.chapter_text | length > 800 %}
+{% set ns = namespace(call_counter=0) %}
+
+{# Split at a paragraph break near the midpoint #}
+{% set paragraphs = ms_ch.chapter_text.split('\n\n') %}
+{% if paragraphs | length >= 3 %}
+  {% set split_idx = (paragraphs | length * 45) // 100 %}
+  {% set split_idx = [split_idx, 1] | max %}
+  {% set existing_draft = paragraphs[:split_idx] | join('\n\n') %}
+  {% set continuation = paragraphs[split_idx:] | join('\n\n') %}
+{% else %}
+  {# Fallback: split at character position #}
+  {% set mid = (ms_ch.chapter_text | length * 45) // 100 %}
+  {% set existing_draft = ms_ch.chapter_text[:mid] %}
+  {% set continuation = ms_ch.chapter_text[mid:] %}
+{% endif %}
+
+{# Find the outline chapter #}
+{% set outline_ch = namespace(found=None) %}
+{% for act in outline.acts %}
+  {% for ch in act.chapters %}
+    {% if ch.id == ms_ch.id %}
+      {% set outline_ch.found = ch %}
+    {% endif %}
+  {% endfor %}
+{% endfor %}
+
+{% set ch_name = ms_ch.name if ms_ch.name else (outline_ch.found.name if outline_ch.found else "this chapter") %}
+{% set messages = [] %}
+
+{# System prompt includes the partial chapter as existing state #}
+{% set sys_with_draft = sys_content_tpl ~ "\n\n## Existing Partial Draft for " ~ ch_name ~ "\nThe manuscript for this chapter currently contains approximately " ~ existing_draft.split() | length ~ " words." %}
+{% set _ = messages.append({"role": "system", "content": sys_with_draft}) %}
+
+{# User requests continuation #}
+{% set continue_phrases = [
+  "Continue writing %s from where I left off.",
+  "I stopped partway through %s. Can you pick up where I left off and finish it?",
+  "Please continue %s — I've written the first half.",
+  "Finish writing %s for me. Continue from the current stopping point."
+] %}
+{% set phrase = continue_phrases[(ch_name | length) % (continue_phrases | length)] %}
+{% set _ = messages.append({"role": "user", "content": phrase % ch_name}) %}
+
+{# Read the current state #}
+{% set cid1 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Let me see where you left off.",
+  "tool_calls": [{"id": cid1, "type": "function", "function": {"name": "read_manuscript", "arguments": {"id": ms_ch.id} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid1, "content": {"id": ms_ch.id, "content": existing_draft} | tojson}) %}
+
+{# Read the chapter plan for remaining beats #}
+{% if outline_ch.found %}
+{% set cid2 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Let me check the chapter plan to see what beats still need to be covered.",
+  "tool_calls": [{"id": cid2, "type": "function", "function": {"name": "read_outline", "arguments": {"id": outline_ch.found.id, "type": "chapter"} | tojson}}]
+}) %}
+{% set plan_data = {"id": outline_ch.found.id, "name": outline_ch.found.name, "content": outline_ch.found.content} %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid2, "content": plan_data | tojson}) %}
+{% endif %}
+
+{# Write the continuation using replace_manuscript with full combined text #}
+{% set cid3 = m.next_call_id(ns) %}
+{% set full_text = existing_draft ~ "\n\n" ~ continuation %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid3, "type": "function", "function": {"name": "replace_manuscript", "arguments": {"id": ms_ch.id, "content": full_text} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid3, "content": '{"success": true}'}) %}
+
+{% set added_words = continuation.split() | length %}
+{% set _ = messages.append({"role": "assistant", "content": "I've continued **" ~ ch_name ~ "** from where you left off, adding approximately " ~ added_words ~ " words. The new section covers the remaining story beats from the chapter plan. The full chapter now runs about " ~ full_text.split() | length ~ " words. Would you like to review it or make any edits?"}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endif %}
+{% endfor %}
+{% endif %}

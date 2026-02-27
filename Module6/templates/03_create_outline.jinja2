@@ -1,0 +1,157 @@
+{# =============================================================================
+   03_create_outline.jinja2
+   
+   Purpose:  Teach the model to build a hierarchical outline:
+             outline → acts → chapters.
+   Input:    A novel record with a populated outline containing acts and chapters,
+             plus world-building elements (characters, locations, etc.).
+   Output:   One JSONL line — a long multi-turn conversation where the assistant
+             creates the outline, acts, and chapters in sequence.
+   
+   Conversation flow:
+     1. System: full world-building context (all characters, locations, etc.)
+     2. User: asks to create the outline structure
+     3. Assistant: creates the outline via create_outline
+     4. Assistant: iterates through acts via create_outline_act
+     5. Assistant: iterates through chapters via create_outline_chapter
+     Multiple user-assistant turns to make it collaborative.
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+{% set ns = namespace(call_counter=0) %}
+
+{# --- Skip if no outline data --------------------------------------------- #}
+{% if outline and outline.acts and outline.acts | length > 0 %}
+
+{# --- System prompt with full world context ------------------------------- #}
+{% set sys_content %}
+{{ m.system_prompt(
+    genre=genre,
+    logline=logline,
+    outline=None,
+    characters=characters,
+    locations=locations,
+    organizations=organizations,
+    lorebooks=lorebooks,
+    guidelines=guidelines,
+    include_outline_details=false
+) }}
+
+The user has finished world-building and is ready to create the plot outline. Help them structure the story into acts and chapters.
+{% endset %}
+
+{# --- Phrase banks -------------------------------------------------------- #}
+{% set outline_request_phrases = [
+  "Alright, I think we have enough world-building done. Let's create the outline for the story. I'm thinking something like: %s",
+  "Time to outline the plot! Here's my high-level vision: %s",
+  "Let's structure the story now. The overall arc should be: %s",
+  "I want to map out the full plot. The synopsis: %s"
+] %}
+
+{% set act_intro_phrases = [
+  "Now let's break this into acts. Start with %s — %s",
+  "Great! Let's define the acts. First up: %s. %s",
+  "Let's flesh out the act structure. Begin with %s: %s",
+  "Okay, define the first act — %s. Here's the idea: %s"
+] %}
+
+{% set next_act_phrases = [
+  "Perfect. Now let's do %s. %s",
+  "Next act: %s — %s",
+  "Moving on to %s. %s",
+  "Now for %s. Here's what happens: %s"
+] %}
+
+{% set chapter_request_phrases = [
+  "Now break %s into chapters.",
+  "Let's define the chapters for %s.",
+  "Flesh out the chapters in %s.",
+  "Time to outline the individual chapters of %s."
+] %}
+
+{% set outline_req = outline_request_phrases[(outline.name | length) % (outline_request_phrases | length)] %}
+
+{# --- Build the messages array -------------------------------------------- #}
+{% set messages = [] %}
+
+{# 1. System prompt #}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+
+{# 2. User requests outline creation #}
+{% set synopsis = outline.content if outline.content else outline.description if outline.description else "A " ~ genre ~ " story." %}
+{% set _ = messages.append({"role": "user", "content": outline_req % synopsis}) %}
+
+{# 3. Assistant creates the outline #}
+{% set cid = m.next_call_id(ns) %}
+{% set outline_args = {"name": outline.name, "content": outline.content} %}
+{% if outline.description is defined and outline.description %}
+  {% set outline_args = outline_args | combine({"description": outline.description}) %}
+{% endif %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid, "type": "function", "function": {"name": "create_outline", "arguments": outline_args | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid, "content": '{"success": true, "id": "' ~ outline.id ~ '"}'}) %}
+
+{% set _ = messages.append({"role": "assistant", "content": "I've created the outline for \"" ~ outline.name ~ "\". Let's now break it down into acts and chapters. How many acts are you envisioning?"}) %}
+
+{# 4. Iterate over acts #}
+{% for act in outline.acts %}
+  {# User requests the act #}
+  {% if loop.first %}
+    {% set act_phrase = act_intro_phrases[(act.name | length) % (act_intro_phrases | length)] %}
+  {% else %}
+    {% set act_phrase = next_act_phrases[(act.name | length) % (next_act_phrases | length)] %}
+  {% endif %}
+  {% set act_desc = act.description if act.description else act.content[:150] ~ "..." if act.content | length > 150 else act.content %}
+  {% set _ = messages.append({"role": "user", "content": act_phrase % (act.name, act_desc)}) %}
+
+  {# Assistant creates the act #}
+  {% set cid = m.next_call_id(ns) %}
+  {% set act_args = {"outlineId": outline.id, "name": act.name, "content": act.content} %}
+  {% if act.description is defined and act.description %}
+    {% set act_args = act_args | combine({"description": act.description}) %}
+  {% endif %}
+  {% set _ = messages.append({
+    "role": "assistant",
+    "content": None,
+    "tool_calls": [{"id": cid, "type": "function", "function": {"name": "create_outline_act", "arguments": act_args | tojson}}]
+  }) %}
+  {% set _ = messages.append({"role": "tool", "tool_call_id": cid, "content": '{"success": true, "id": "' ~ act.id ~ '"}'}) %}
+
+  {# Assistant confirms and asks about chapters #}
+  {% set ch_req = chapter_request_phrases[(act.name | length) % (chapter_request_phrases | length)] %}
+  {% set _ = messages.append({"role": "assistant", "content": "**" ~ act.name ~ "** is set up. " ~ (ch_req % act.name)}) %}
+
+  {# User agrees #}
+  {% set _ = messages.append({"role": "user", "content": "Yes, go ahead and create the chapters for this act."}) %}
+
+  {# 5. Iterate over chapters within the act #}
+  {% for ch in act.chapters %}
+    {% set cid = m.next_call_id(ns) %}
+    {% set ch_args = {"actId": act.id, "name": ch.name, "content": ch.content} %}
+    {% if ch.description is defined and ch.description %}
+      {% set ch_args = ch_args | combine({"description": ch.description}) %}
+    {% endif %}
+
+    {# For the first chapter, the assistant just creates it.
+       For subsequent ones, chain them in a single turn. #}
+    {% set _ = messages.append({
+      "role": "assistant",
+      "content": None,
+      "tool_calls": [{"id": cid, "type": "function", "function": {"name": "create_outline_chapter", "arguments": ch_args | tojson}}]
+    }) %}
+    {% set _ = messages.append({"role": "tool", "tool_call_id": cid, "content": '{"success": true, "id": "' ~ ch.id ~ '"}'}) %}
+  {% endfor %}
+
+  {# Assistant summarizes the act's chapters #}
+  {% set ch_summary %}I've created {{ act.chapters | length }} chapter(s) for **{{ act.name }}**:
+{% for ch in act.chapters %}- {{ ch.name }}{% if ch.description %}: {{ ch.description }}{% endif %}
+{% endfor %}
+{% if not loop.last %}Ready for the next act!{% else %}That completes the outline! You now have a full structure with {{ outline.acts | length }} act(s) and {{ outline.acts | sum(attribute='chapters') | list | length if false else outline.acts | map(attribute='chapters') | map('length') | sum }} chapter(s) total. Would you like to start writing, or do you want to refine any of the chapter plans first?{% endif %}{% endset %}
+  {% set _ = messages.append({"role": "assistant", "content": ch_summary}) %}
+{% endfor %}
+
+{# --- Output the JSONL line ----------------------------------------------- #}
+{"messages": {{ messages | tojson }}}
+{% endif %}

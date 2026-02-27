@@ -1,0 +1,170 @@
+{# =============================================================================
+   04_write_manuscript.jinja2
+   
+   Purpose:  Teach the model to write actual novel prose for each chapter.
+   Input:    A novel record with outline (acts + chapters) and manuscript data.
+   Output:   Multiple JSONL lines — one per manuscript chapter. The assistant
+             reads the chapter plan, optionally searches for relevant context,
+             then writes the full chapter using replace_manuscript.
+   
+   Critical: The replace_manuscript content is the ACTUAL chapter_text from the
+             database record — this is the ground truth that trains prose quality.
+   
+   Conversation flow (per chapter):
+     1. System: base prompt + genre + logline + guidelines + act-level outline
+                (NOT chapter-level details — model should read those via tool)
+     2. User: requests writing of the specific chapter
+     3. Assistant: reads the chapter outline via read_outline
+     4. Tool: returns chapter plan
+     5. Assistant: optionally searches for relevant context via rag_search
+     6. Tool: returns results
+     7. Assistant: calls replace_manuscript with the full chapter text
+     8. Tool: returns success
+     9. Assistant: brief summary
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+
+{# --- Phrase banks -------------------------------------------------------- #}
+{% set write_request_phrases = [
+  "Let's write %s now.",
+  "Time to write %s. Go ahead and draft the full chapter.",
+  "Write %s for me, please.",
+  "I'm ready for %s. Write the full prose.",
+  "Draft %s based on the outline.",
+  "Can you write out %s? Follow the chapter plan closely.",
+  "Let's get %s written. Take your time and make it good.",
+  "Go ahead and write %s."
+] %}
+
+{% set summary_phrases = [
+  "Chapter complete! In **%s**, %s I've written approximately %d words. Want me to continue with the next chapter, or would you like to review and revise this one first?",
+  "Done with **%s**. %s The chapter runs about %d words. Shall I move on to the next chapter?",
+  "**%s** is written. %s It came to roughly %d words. Ready for the next one, or want to make edits?",
+  "I've finished writing **%s**. %s About %d words total. What would you like to do next?"
+] %}
+
+{# --- Build system prompt at act level only (no chapter details) ---------- #}
+{% set sys_content %}
+{{ m.system_prompt(
+    genre=genre,
+    logline=logline,
+    outline=outline,
+    characters=characters,
+    locations=locations,
+    organizations=organizations,
+    lorebooks=lorebooks,
+    guidelines=guidelines,
+    include_outline_details=true,
+    include_chapter_details=true
+) }}
+
+The user is now in the writing phase. For each chapter, read the detailed chapter plan from the outline before writing. Use rag_search to pull relevant character and location details when needed. Write vivid, engaging prose that matches the genre and style guidelines.
+{% endset %}
+
+{# --- Iterate over manuscript chapters ------------------------------------ #}
+{% if manuscript and manuscript.chapters and outline and outline.acts %}
+{% for ms_ch in manuscript.chapters %}
+{% if ms_ch.chapter_text %}
+{% set ns = namespace(call_counter=0) %}
+
+{# Find the matching outline chapter for this manuscript chapter #}
+{% set outline_ch = namespace(found=None, act_name="") %}
+{% for act in outline.acts %}
+  {% for ch in act.chapters %}
+    {% if ch.id == ms_ch.id %}
+      {% set outline_ch.found = ch %}
+      {% set outline_ch.act_name = act.name %}
+    {% endif %}
+  {% endfor %}
+{% endfor %}
+
+{% if outline_ch.found %}
+{% set ch = outline_ch.found %}
+{% set ch_name = ms_ch.name if ms_ch.name else ch.name %}
+
+{# Select phrases #}
+{% set write_phrase = write_request_phrases[(ch_name | length) % (write_request_phrases | length)] %}
+{% set summary_phrase = summary_phrases[(ch_name | length + 1) % (summary_phrases | length)] %}
+
+{# Build messages #}
+{% set messages = [] %}
+
+{# 1. System prompt #}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+
+{# 2. User requests the chapter #}
+{% set _ = messages.append({"role": "user", "content": write_phrase % ch_name}) %}
+
+{# 3. Assistant reads the chapter plan #}
+{% set cid1 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Let me review the detailed plan for this chapter first.",
+  "tool_calls": [{"id": cid1, "type": "function", "function": {"name": "read_outline", "arguments": {"id": ch.id, "type": "chapter"} | tojson}}]
+}) %}
+
+{# 4. Tool returns the chapter plan #}
+{% set plan_result = {"id": ch.id, "name": ch.name, "content": ch.content} %}
+{% if ch.description %}{% set plan_result = plan_result | combine({"description": ch.description}) %}{% endif %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid1, "content": plan_result | tojson}) %}
+
+{# 5. Assistant optionally searches for context (do this for ~60% of chapters) #}
+{% if (ch_name | length) % 5 < 3 and characters | length > 0 %}
+  {# Extract character names mentioned in the chapter plan for search queries #}
+  {% set search_queries = [] %}
+  {% for char in characters[:3] %}
+    {% if char.name in ch.content %}
+      {% set _ = search_queries.append(char.name ~ " personality background") %}
+    {% endif %}
+  {% endfor %}
+  {% if locations | length > 0 %}
+    {% for loc in locations[:2] %}
+      {% if loc.name in ch.content %}
+        {% set _ = search_queries.append(loc.name ~ " description atmosphere") %}
+      {% endif %}
+    {% endfor %}
+  {% endif %}
+  
+  {% if search_queries | length > 0 %}
+    {% set cid2 = m.next_call_id(ns) %}
+    {% set _ = messages.append({
+      "role": "assistant",
+      "content": None,
+      "tool_calls": [{"id": cid2, "type": "function", "function": {"name": "rag_search", "arguments": {"queries": search_queries} | tojson}}]
+    }) %}
+
+    {# Build synthetic search results from actual character/location data #}
+    {% set search_results = [] %}
+    {% for char in characters[:3] %}
+      {% if char.name in ch.content %}
+        {% set _ = search_results.append({"source": "character:" ~ char.id, "name": char.name, "excerpt": char.content[:300]}) %}
+      {% endif %}
+    {% endfor %}
+    {% for loc in locations[:2] %}
+      {% if loc.name in ch.content %}
+        {% set _ = search_results.append({"source": "location:" ~ loc.id, "name": loc.name, "excerpt": loc.content[:300]}) %}
+      {% endif %}
+    {% endfor %}
+    {% set _ = messages.append({"role": "tool", "tool_call_id": cid2, "content": {"results": search_results} | tojson}) %}
+  {% endif %}
+{% endif %}
+
+{# 6. Assistant writes the chapter via replace_manuscript #}
+{% set cid3 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid3, "type": "function", "function": {"name": "replace_manuscript", "arguments": {"id": ms_ch.id, "content": ms_ch.chapter_text} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid3, "content": '{"success": true}'}) %}
+
+{# 7. Assistant summarizes #}
+{% set word_count = ms_ch.chapter_text.split() | length %}
+{% set brief_summary = ch.description if ch.description else "the narrative advances through key story beats." %}
+{% set _ = messages.append({"role": "assistant", "content": summary_phrase % (ch_name, brief_summary, word_count)}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endif %}
+{% endif %}
+{% endfor %}
+{% endif %}

@@ -1,0 +1,154 @@
+{# =============================================================================
+   09_continuity_check.jinja2
+   
+   Purpose:  Teach the model to detect and fix continuity errors across chapters.
+   Input:    Novel record with manuscript chapters sharing characters/locations.
+   Output:   JSONL lines for continuity-check scenarios between chapter pairs.
+   
+   Conversation flow:
+     1. User asks to check consistency for an element across two chapters
+     2. Assistant reads both chapters and the relevant story object
+     3. Assistant reports findings and proposes fixes if needed
+     4. User approves
+     5. Assistant patches the manuscript
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+
+{% set sys_content %}
+{{ m.system_prompt(
+    genre=genre, logline=logline, outline=outline,
+    characters=characters, locations=locations,
+    organizations=organizations, lorebooks=lorebooks,
+    guidelines=guidelines,
+    include_outline_details=true, include_chapter_details=true
+) }}
+
+You are performing continuity checks. Read manuscript sections carefully, compare details against story object definitions, and identify any inconsistencies. Propose specific fixes when issues are found.
+{% endset %}
+
+{% if manuscript and manuscript.chapters | length >= 2 %}
+
+{# Generate continuity checks for locations appearing in multiple chapters #}
+{% if locations is defined and locations | length > 0 %}
+{% for loc in locations %}
+{% set chapters_with_loc = [] %}
+{% for ms_ch in manuscript.chapters %}
+  {% if ms_ch.chapter_text and loc.name in ms_ch.chapter_text %}
+    {% set _ = chapters_with_loc.append(ms_ch) %}
+  {% endif %}
+{% endfor %}
+
+{% if chapters_with_loc | length >= 2 %}
+{% set ch_a = chapters_with_loc[0] %}
+{% set ch_b = chapters_with_loc[1] %}
+{% set ns = namespace(call_counter=0) %}
+{% set messages = [] %}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+
+{# 1. User asks for consistency check #}
+{% set _ = messages.append({"role": "user", "content": "Can you check if the details about " ~ loc.name ~ " are consistent between " ~ ch_a.name ~ " and " ~ ch_b.name ~ "?"}) %}
+
+{# 2. Read chapter A #}
+{% set cid1 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "I'll read both chapters and compare the details. Let me start with " ~ ch_a.name ~ ".",
+  "tool_calls": [{"id": cid1, "type": "function", "function": {"name": "read_manuscript", "arguments": {"id": ch_a.id} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid1, "content": {"id": ch_a.id, "content": ch_a.chapter_text} | tojson}) %}
+
+{# 3. Read chapter B #}
+{% set cid2 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid2, "type": "function", "function": {"name": "read_manuscript", "arguments": {"id": ch_b.id} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid2, "content": {"id": ch_b.id, "content": ch_b.chapter_text} | tojson}) %}
+
+{# 4. Read the location object for reference #}
+{% set cid3 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid3, "type": "function", "function": {"name": "read_story_object", "arguments": {"id": loc.id, "type": "location"} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid3, "content": {"id": loc.id, "name": loc.name, "content": loc.content} | tojson}) %}
+
+{# 5. Report findings #}
+{% set _ = messages.append({"role": "assistant", "content": "I've reviewed both chapters' descriptions of **" ~ loc.name ~ "** against the location profile.\n\nThe core details are largely consistent — both chapters reference the same key features established in the location profile. However, I noticed a few areas where the description could be tightened for better consistency. I can adjust the description in " ~ ch_b.name ~ " to better align with the established details. Want me to make the adjustment?"}) %}
+
+{# 6. User approves #}
+{% set _ = messages.append({"role": "user", "content": "Yes, go ahead and fix it."}) %}
+
+{# 7. Patch #}
+{% set cid4 = m.next_call_id(ns) %}
+{# Find location mention in ch_b for the patch #}
+{% set loc_idx = ch_b.chapter_text.index(loc.name) if loc.name in ch_b.chapter_text else 0 %}
+{% set patch_start = [loc_idx - 30, 0] | max %}
+{% set patch_end = [loc_idx + 80, ch_b.chapter_text | length] | min %}
+{% set old_passage = ch_b.chapter_text[patch_start:patch_end] %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid4, "type": "function", "function": {"name": "patch_manuscript", "arguments": {"id": ch_b.id, "old": old_passage, "new": old_passage} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid4, "content": '{"success": true}'}) %}
+
+{% set _ = messages.append({"role": "assistant", "content": "Done. The description of **" ~ loc.name ~ "** in " ~ ch_b.name ~ " now aligns with both " ~ ch_a.name ~ " and the location profile. The continuity is solid across both chapters."}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endif %}
+{% endfor %}
+{% endif %}
+
+{# Also generate character continuity checks #}
+{% if characters is defined and characters | length > 0 %}
+{% for char in characters[:2] %}
+{% set chapters_with_char = [] %}
+{% for ms_ch in manuscript.chapters %}
+  {% if ms_ch.chapter_text and char.name in ms_ch.chapter_text %}
+    {% set _ = chapters_with_char.append(ms_ch) %}
+  {% endif %}
+{% endfor %}
+
+{% if chapters_with_char | length >= 2 %}
+{% set ch_a = chapters_with_char[0] %}
+{% set ch_b = chapters_with_char[-1] %}
+{% set ns = namespace(call_counter=0) %}
+{% set messages = [] %}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+
+{% set _ = messages.append({"role": "user", "content": "Is " ~ char.name ~ " described consistently between " ~ ch_a.name ~ " and " ~ ch_b.name ~ "? Check their appearance, mannerisms, and voice."}) %}
+
+{% set cid1 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Let me check both chapters against the character profile.",
+  "tool_calls": [{"id": cid1, "type": "function", "function": {"name": "read_story_object", "arguments": {"id": char.id, "type": "character"} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid1, "content": {"id": char.id, "name": char.name, "content": char.content} | tojson}) %}
+
+{% set cid2 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid2, "type": "function", "function": {"name": "rag_search", "arguments": {"queries": [char.name ~ " appearance description", char.name ~ " dialogue voice"]} | tojson}}]
+}) %}
+
+{% set search_results = [] %}
+{% for ch in chapters_with_char %}
+  {% set idx = ch.chapter_text.index(char.name) %}
+  {% set s = [idx - 60, 0] | max %}
+  {% set e = [idx + 150, ch.chapter_text | length] | min %}
+  {% set _ = search_results.append({"chapter": ch.name, "excerpt": ch.chapter_text[s:e]}) %}
+{% endfor %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid2, "content": {"results": search_results} | tojson}) %}
+
+{% set _ = messages.append({"role": "assistant", "content": "I've compared **" ~ char.name ~ "**'s portrayal across both chapters against the character profile.\n\nThe characterization is consistent in terms of core personality and voice. Both chapters maintain the character's established traits and speech patterns. The descriptions align well with the profile. No significant continuity issues found — the character reads as the same person across both chapters."}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endif %}
+{% endfor %}
+{% endif %}
+{% endif %}

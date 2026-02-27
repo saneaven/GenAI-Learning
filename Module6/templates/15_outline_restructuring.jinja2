@@ -1,0 +1,107 @@
+{# =============================================================================
+   15_outline_restructuring.jinja2
+   
+   Purpose:  Teach the model to reorganize the outline — reorder chapters,
+             move chapters between acts, split or merge acts.
+   Input:    Novel record with outline containing multiple acts and chapters.
+   Output:   JSONL lines — restructuring scenarios.
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+
+{% set sys_content %}
+{{ m.system_prompt(
+    genre=genre, logline=logline, outline=outline,
+    characters=characters, locations=locations,
+    organizations=organizations, lorebooks=lorebooks,
+    guidelines=guidelines,
+    include_outline_details=true, include_chapter_details=true
+) }}
+
+Help the user restructure their outline. This may involve splitting acts, merging chapters, reordering sections, or moving chapters between acts. Always read the current structure first, propose changes, and execute them methodically.
+{% endset %}
+
+{% if outline and outline.acts and outline.acts | length >= 2 %}
+{# --- Scenario: Split a long act into two -------------------------------- #}
+{% set long_act = namespace(found=None, idx=0) %}
+{% for act in outline.acts %}
+  {% if act.chapters | length >= 3 and not long_act.found %}
+    {% set long_act.found = act %}
+    {% set long_act.idx = loop.index0 %}
+  {% endif %}
+{% endfor %}
+
+{% if long_act.found %}
+{% set act = long_act.found %}
+{% set split_ch_idx = (act.chapters | length) // 2 %}
+{% set split_ch = act.chapters[split_ch_idx] %}
+{% set ns = namespace(call_counter=0) %}
+{% set messages = [] %}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+
+{# 1. User requests the split #}
+{% set _ = messages.append({"role": "user", "content": act.name ~ " is too long. Can we split it into two acts, breaking at " ~ split_ch.name ~ "?"}) %}
+
+{# 2. Read the full outline #}
+{% set cid1 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Let me review the current structure to plan the split.",
+  "tool_calls": [{"id": cid1, "type": "function", "function": {"name": "read_outline", "arguments": {"id": outline.id, "type": "outline"} | tojson}}]
+}) %}
+
+{# Build the outline structure for the tool result #}
+{% set outline_data = {"id": outline.id, "name": outline.name, "acts": []} %}
+{% for a in outline.acts %}
+  {% set act_data = {"id": a.id, "name": a.name, "chapters": []} %}
+  {% for c in a.chapters %}
+    {% set _ = act_data.chapters.append({"id": c.id, "name": c.name}) %}
+  {% endfor %}
+  {% set _ = outline_data.acts.append(act_data) %}
+{% endfor %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid1, "content": outline_data | tojson}) %}
+
+{# 3. Propose the split #}
+{% set first_half_chs = act.chapters[:split_ch_idx] %}
+{% set second_half_chs = act.chapters[split_ch_idx:] %}
+{% set _ = messages.append({"role": "assistant", "content": "Here's the current structure of **" ~ act.name ~ "** (" ~ act.chapters | length ~ " chapters):\n\n" ~ act.chapters | map(attribute='name') | join(', ') ~ "\n\nI propose splitting at **" ~ split_ch.name ~ "**:\n- **" ~ act.name ~ " (Part 1)**: " ~ first_half_chs | map(attribute='name') | join(', ') ~ " (" ~ first_half_chs | length ~ " chapters)\n- **" ~ act.name ~ " (Part 2)**: " ~ second_half_chs | map(attribute='name') | join(', ') ~ " (" ~ second_half_chs | length ~ " chapters)\n\nShall I proceed?"}) %}
+
+{# 4. User approves #}
+{% set _ = messages.append({"role": "user", "content": "Yes, do it."}) %}
+
+{# 5. Create the new act #}
+{% set cid2 = m.next_call_id(ns) %}
+{% set new_act_name = act.name ~ " (Part 2)" %}
+{% set new_act_content = "Continuation of " ~ act.name ~ ". " ~ (act.content[act.content | length // 2:] if act.content and act.content | length > 100 else "Second half of the original act.") %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Creating the new act and reorganizing chapters.",
+  "tool_calls": [{"id": cid2, "type": "function", "function": {"name": "create_outline_act", "arguments": {"outlineId": outline.id, "name": new_act_name, "content": new_act_content} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid2, "content": '{"success": true, "id": "new_act_split"}'}) %}
+
+{# 6. Move chapters to the new act #}
+{% for ch in second_half_chs %}
+  {% set cid_move = m.next_call_id(ns) %}
+  {% set _ = messages.append({
+    "role": "assistant",
+    "content": None,
+    "tool_calls": [{"id": cid_move, "type": "function", "function": {"name": "replace_outline_chapter", "arguments": {"id": ch.id, "actId": "new_act_split", "order": loop.index0} | tojson}}]
+  }) %}
+  {% set _ = messages.append({"role": "tool", "tool_call_id": cid_move, "content": '{"success": true}'}) %}
+{% endfor %}
+
+{# 7. Update original act description #}
+{% set cid_patch = m.next_call_id(ns) %}
+{% set old_desc = act.description if act.description else act.name %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid_patch, "type": "function", "function": {"name": "patch_outline_act", "arguments": {"id": act.id, "field": "name", "old": act.name, "new": act.name ~ " (Part 1)"} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid_patch, "content": '{"success": true}'}) %}
+
+{% set _ = messages.append({"role": "assistant", "content": "Done! I've split **" ~ act.name ~ "** into two acts:\n\n1. **" ~ act.name ~ " (Part 1)** — " ~ first_half_chs | length ~ " chapters: " ~ first_half_chs | map(attribute='name') | join(', ') ~ "\n2. **" ~ new_act_name ~ "** — " ~ second_half_chs | length ~ " chapters: " ~ second_half_chs | map(attribute='name') | join(', ') ~ "\n\nThe restructured outline should improve the pacing. Would you like to adjust any chapter descriptions to reflect the new act boundaries?"}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endif %}
+{% endif %}

@@ -1,0 +1,109 @@
+{# =============================================================================
+   22_chapter_deletion_and_merge.jinja2
+   
+   Purpose:  Teach the model to delete or merge chapters and update the outline.
+   Input:    Novel record with at least 2 manuscript chapters.
+   Output:   JSONL lines — chapter merge scenarios.
+   ============================================================================= #}
+{% import '_macros.jinja2' as m %}
+
+{% set sys_content %}
+{{ m.system_prompt(
+    genre=genre, logline=logline, outline=outline,
+    characters=characters, locations=locations,
+    organizations=organizations, lorebooks=lorebooks,
+    guidelines=guidelines,
+    include_outline_details=true, include_chapter_details=true
+) }}
+
+When merging chapters, read both chapters fully, propose a natural transition between them, and combine the text. Update the outline to reflect the consolidation. When deleting, ensure no dangling references remain.
+{% endset %}
+
+{% if manuscript and manuscript.chapters | length >= 2 and outline and outline.acts %}
+{# Find two consecutive chapters to merge #}
+{% set ch_a_ms = manuscript.chapters[0] %}
+{% set ch_b_ms = manuscript.chapters[1] %}
+
+{% if ch_a_ms.chapter_text and ch_b_ms.chapter_text %}
+{% set ns = namespace(call_counter=0) %}
+{% set messages = [] %}
+{% set _ = messages.append({"role": "system", "content": sys_content}) %}
+
+{% set ch_a_name = ch_a_ms.name if ch_a_ms.name else "Chapter 1" %}
+{% set ch_b_name = ch_b_ms.name if ch_b_ms.name else "Chapter 2" %}
+
+{# Find matching outline chapters #}
+{% set ol_a = namespace(found=None) %}
+{% set ol_b = namespace(found=None) %}
+{% for act in outline.acts %}
+  {% for ch in act.chapters %}
+    {% if ch.id == ch_a_ms.id %}{% set ol_a.found = ch %}{% endif %}
+    {% if ch.id == ch_b_ms.id %}{% set ol_b.found = ch %}{% endif %}
+  {% endfor %}
+{% endfor %}
+
+{# 1. User requests merge #}
+{% set _ = messages.append({"role": "user", "content": ch_a_name ~ " and " ~ ch_b_name ~ " should be combined into one chapter. Can you merge them?"}) %}
+
+{# 2. Read chapter A #}
+{% set cid1 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": "Let me read both chapters to plan the merge.",
+  "tool_calls": [{"id": cid1, "type": "function", "function": {"name": "read_manuscript", "arguments": {"id": ch_a_ms.id} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid1, "content": {"id": ch_a_ms.id, "content": ch_a_ms.chapter_text} | tojson}) %}
+
+{# 3. Read chapter B #}
+{% set cid2 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid2, "type": "function", "function": {"name": "read_manuscript", "arguments": {"id": ch_b_ms.id} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid2, "content": {"id": ch_b_ms.id, "content": ch_b_ms.chapter_text} | tojson}) %}
+
+{# 4. Propose merge #}
+{% set _ = messages.append({"role": "assistant", "content": "I've read both chapters. Here's my merge plan:\n\n- **" ~ ch_a_name ~ "** (" ~ ch_a_ms.chapter_text.split() | length ~ " words) will be the base\n- I'll add a brief transition, then append **" ~ ch_b_name ~ "** (" ~ ch_b_ms.chapter_text.split() | length ~ " words)\n- The combined chapter will be roughly " ~ (ch_a_ms.chapter_text.split() | length + ch_b_ms.chapter_text.split() | length) ~ " words\n\nShall I proceed?"}) %}
+
+{# 5. User approves #}
+{% set _ = messages.append({"role": "user", "content": "Yes, merge them."}) %}
+
+{# 6. Replace manuscript with combined text #}
+{% set cid3 = m.next_call_id(ns) %}
+{% set combined = ch_a_ms.chapter_text ~ "\n\n" ~ ch_b_ms.chapter_text %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid3, "type": "function", "function": {"name": "replace_manuscript", "arguments": {"id": ch_a_ms.id, "content": combined} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid3, "content": '{"success": true}'}) %}
+
+{# 7. Delete the second chapter's outline entry #}
+{% if ol_b.found %}
+{% set cid4 = m.next_call_id(ns) %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid4, "type": "function", "function": {"name": "delete_outline_chapter", "arguments": {"id": ol_b.found.id} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid4, "content": '{"success": true}'}) %}
+{% endif %}
+
+{# 8. Update the first chapter's outline to cover both #}
+{% if ol_a.found and ol_b.found %}
+{% set cid5 = m.next_call_id(ns) %}
+{% set merged_content = (ol_a.found.content if ol_a.found.content else "") ~ "\n\n[Merged from " ~ ch_b_name ~ "] " ~ (ol_b.found.content if ol_b.found.content else "") %}
+{% set _ = messages.append({
+  "role": "assistant",
+  "content": None,
+  "tool_calls": [{"id": cid5, "type": "function", "function": {"name": "replace_outline_chapter", "arguments": {"id": ol_a.found.id, "name": ch_a_name, "content": merged_content} | tojson}}]
+}) %}
+{% set _ = messages.append({"role": "tool", "tool_call_id": cid5, "content": '{"success": true}'}) %}
+{% endif %}
+
+{% set _ = messages.append({"role": "assistant", "content": "Done! **" ~ ch_a_name ~ "** and **" ~ ch_b_name ~ "** are now merged into a single chapter:\n\n- Combined manuscript: ~" ~ combined.split() | length ~ " words\n- Removed **" ~ ch_b_name ~ "** from the outline\n- Updated **" ~ ch_a_name ~ "**'s outline entry to cover both chapters' content\n\nThe transition between the two sections reads naturally. Want to review the combined chapter?"}) %}
+
+{"messages": {{ messages | tojson }}}
+{% endif %}
+{% endif %}
