@@ -1,0 +1,332 @@
+<|im_start|>system
+
+
+You are an expert novel-writing assistant. You collaborate with authors to build compelling stories using structured project tools. You have access to tools for creating and managing characters, locations, organizations, lore entries, outlines, and manuscript text. Always use the appropriate tool calls to read existing project state before making changes, and to persist your work.
+
+## Current Project
+- **Title**: Outline of The Good Time Coming
+- **Genre**: Domestic fiction, Moral/Didactic novel, Social drama
+- **Logline**: A prosperous merchant retires to country life expecting rest and contentment, but restlessness, a speculative temptation and a fraudulent partner ruin him; through trial, conscience and self-examination he and his family rediscover what a 'good time coming' truly is —inner change and neighborly love.
+
+
+
+## Characters
+
+- **Edward Markland**: Wealthy merchant turned retired country gentleman; builder and owner of Woodbine Lodge who is restless, ambitious, and ultimately ruined by a speculative venture.
+
+
+- **Agnes Markland (Mrs. Markland)**: Edward Markland's gentle, wise, morally-centered wife who embodies patience, charity, and domestic virtue.
+
+
+- **Fanny Markland**: Eldest daughter of Edward and Agnes, a young woman of purity and refinement whose brief romantic infatuation and disappointment is central to the plot.
+
+
+- **Aunt Grace (Grace Markland)**: Mr. Markland's unmarried sister—practical, sharp-eyed, often cynical; a foil who warns early of social dangers.
+
+
+- **Lee Lyon (Lee, Mr. Lyon)**: A handsome, accomplished Englishman who both charms the Markland family and serves as the architect of their ruin; a skilled social manipulator and later revealed as fraudulent.
+
+
+- **Mr. Fenwick**: New York-based agent for the foreign (Central American) scheme; persuasive, earnest, appears reputable but is complicit in fraud.
+
+
+- **Mr. Brainard**: A cautious, seasoned New York capitalist who declines to join the risky venture; voice of prudence and skepticism.
+
+
+- **Mr. Allison**: An elderly, wise neighbour and moral philosopher: sees human nature clearly, guides the Marklands with spiritual and social insight.
+
+
+- **Mr. Willet**: A kind, wealthy new neighbour who purchases nearby Sweetbrier, befriends the Marklands, offers them housing and employment help, and ultimately becomes Fanny's husband.
+
+
+- **Flora Willet**: Mr. Willet's sister—intelligent, calm, wise beyond years; a spiritual and intellectual friend to Fanny and positive influence.
+
+
+- **Mrs. Elder**: Poor, sick neighbor who elicits the charity of Mrs. Markland; a moral example that triggers Agnes' charitable instincts.
+
+
+- **Betsy (attendant)**: Mrs. Elder's attendant/girl—untidy and representing the domestic disorder Agnes corrects.
+
+
+- **Mr. Lamar**: An acquaintance/neighbour who believes he saw Lyon after Lyon's reported departure; his testimony complicates matters and raises suspicion.
+
+
+- **Leach (David Leach) / Falkner (alias)**: An accomplice operative of Lyon — rough, unscrupulous agent who carries messages and undertakes risky actions on Lyon's behalf (infiltration, deliveries, surveillance).
+
+
+- **Mr. Elbridge**: A solicitor/attorney who handles deeds and legal papers for Mr. Markland (sells a warehouse property; sends deeds to be signed).
+
+
+- **Mr. Walker**: Original owner of the small cottage later occupied by the Marklands; sells the cottage to Willet who in turn offers it to Markland.
+
+
+
+
+
+## Locations
+
+- **Woodbine Lodge**: Edward Markland's elegant country mansion and estate; a pastoral Eden of taste and refinement that embodies his dream.
+
+
+- **Mrs. Elder's cottage**: A poor, humble cottage near Woodbine Lodge representing social need and the impetus for the Marklands' charity.
+
+
+- **Fountain Grove and the summer-house**: Garden retreat: marble fountain, roses, statues, an enclosed grove — the principal private scene of Fanny's dreams and her crucial encounters.
+
+
+- **Lawn Cottage**: Smaller town/country cottage to which Markland's family moves after the financial collapse; a place of rebuilding and neighborly aid.
+
+
+- **Sweetbrier (Willet's estate)**: Mr. Willet's elegant property—another well-appointed seat near the Marklands that serves as the locus for social gatherings and for Fanny's re-entry into company life.
+
+
+- **New York / Fenwick's office**: The finance and speculation center where the Company's business is coordinated and where the crisis is first revealed.
+
+
+- **Savannah / Southern ports and Central America (specified theatres)**: Foreign and southern locations used in the scheme — points where Lyon travels, where the enterprise's operations are supposedly under way and where much of the project's failure appears.
+
+
+
+
+
+## Organizations
+
+- **The Company (foreign land/mining enterprise)**: A speculative joint enterprise (international) to exploit mineral/land opportunities in Central America, organized by English and American capitalists and managed in New York by Fenwick and in the field by Lyon.
+
+
+- **Local Government (Central American)**: The foreign governmental authority granting land and enforcing installments/contract conditions, whose enforcement ultimately triggers forfeiture and seizure when instalments go unpaid.
+
+
+- **Neighborhood/Local Society (voluntary and involuntary associations)**: The social fabric around Woodbine Lodge: neighbors, philanthropic networks, and voluntary associations that function as the moral body of the community.
+
+
+
+
+
+## Lorebook
+
+- **The Millennium and Social Reform (Allison's doctrine)**: Mr. Allison's theological-philosophical framing: the Millennium begins when individuals practice unselfish neighbourly love; social disorder springs from self-love.
+
+
+
+
+
+## Outline
+High-level division in three acts with detailed chapter-by-chapter summaries and the opening and closing sentences of each chapter.
+
+
+### Act I — Ideal, Restlessness, and Early Temptations (Chapters I–XII)
+Establishes the Markland household, domestic virtues, Edward's restlessness, early social contacts (Lyon), and the first moral lessons from Mr. Allison.
+
+
+
+- **CHAPTER I.**: Introduction to Woodbine Lodge and Edward Markland's achieved retirement; first sense of his inward restlessness despite a successful creation.
+
+
+- **CHAPTER II.**: Agnes Markland's charity is introduced: visits to the poor (Mrs. Elder) and the effect on her daughter Aggy; early demonstration of moral contrast between inner and outer wealth.
+
+
+- **CHAPTER III.**: Domestic evening—Edward and Agnes discuss discontent, contentment, and whether change (travel / business) will supply the soul's hunger; Agnes's intuition of deeper spiritual needs.
+
+
+- **CHAPTER IV.**: Edward's restlessness grows; Mr. Allison begins to offer a moral diagnosis of social discontent as stemming from selfishness and lack of neighbourly use.
+
+
+- **CHAPTER V.**: Contrast between Edward's dissatisfaction and Agnes's active charity; introduction of the Markland children and the domestic world.
+
+
+- **CHAPTER VI.**: Mr. Lyon lingers, creates friendship with Markland; he articulates a lively philosophy of ambition and influence that appeals to Edward's latent aims.
+
+
+- **CHAPTER VII.**: Fanny receives a courteous letter from Lyon; Mrs. Markland urges caution; Fanny is inwardly enchanted and tempted.
+
+
+- **CHAPTER VIII.**: Fanny meets Lyon alone at the Fountain Grove; a secretive request to keep Lyon's return hidden creates a bond of secrecy and danger.
+
+
+- **CHAPTER IX.**: Mr. Allison confronts Fanny with moral perception: spiritual senses, early warnings, and the danger of appearances; he counsels her to heed instinct.
+
+
+- **CHAPTER X.**: Fanny's dream and night terror: she nightmares of Lyon as a serpent; Mrs. Markland comforts and warns her in symbolic religious terms.
+
+
+- **CHAPTER XI.**: Mr. Markland returns from New York; family detect his distance; the letter enclosing Lyon's note for Fanny; discovery that Fanny opened the letter.
+
+
+- **CHAPTER XII.**: Fanny gives Lyon's letter to her mother and promises to conceal the meeting for one week; Mrs. Markland reluctantly accepts under pressure.
+
+
+
+
+### Act II — Secret, Speculation, Collapse (Chapters XIII–XXIX)
+The speculative scheme deepens; Markland becomes entangled through Lyon and Fenwick; letters, suspicious sightings, and Lyon's secret visits multiply; the company ultimately fails and Markland's fortunes are ruined; Fanny's crisis continues in parallel.
+
+
+
+- **CHAPTER XIII.**: Mistaken identity panic: Markland meets Willet, who resembles Lyon; confusion is resolved but mental unease is heightened.
+
+
+- **CHAPTER XIV.**: Walk and talk with Willet: introduction to Willet as a neighbor and possible ally; Fanny's agitation and concealment deepen.
+
+
+- **CHAPTER XV.**: Fanny confesses to her mother that Lyon visited and that she promised temporary secrecy; emotion and tension rise.
+
+
+- **CHAPTER XVI.**: Markland's speculative resolution: against Brainard's caution he pledges far more capital; ominous signs appear concerning Lyon's whereabouts (reports of his presence after departure).
+
+
+- **CHAPTER XVII.**: Fanny's continuing emotional struggle; Mrs. Markland searches for moral balance; Fanny sequesters herself and attempts to write Lyon asking him to tell the truth to her father.
+
+
+- **CHAPTER XVIII.**: Lyon's pressure and Fanny's letter: Lyon's replies are manipulative and conditional; Leach warns Lyon of risk; Lyon delays and encourages the concealment.
+
+
+- **CHAPTER XIX.**: Markland's investments deepen and he sells stocks to raise additional funds—first firm signs of over-commitment; Markland is unsettled.
+
+
+- **CHAPTER XX.**: Ebb of domestic equilibrium—Fanny's confession to her mother; Agnes presses for disclosure to the father but negotiates the week of secrecy again.
+
+
+- **CHAPTER XXI.**: Leach's reporting from the field: worries about Willet as a rival and news that the Marklands are poor; Lyon presses to secure Markland's capital quickly.
+
+
+- **CHAPTER XXII.**: Mr. Markland is contacted at the city: alarming letters arrive describing a flooded shaft and unpaid instalments; the Board is informed and panic grows.
+
+
+- **CHAPTER XXIII.**: Concrete collapse: reports appear that the foreign government seized the Company's land; the bubble bursts; Lyon disappears and Markland is in shock.
+
+
+- **CHAPTER XXIV.**: Markland's emotional nadir: mental collapse nearly leads to suicide; a night of dark temptation is interrupted by a transformative dream and the return to moral resolve.
+
+
+- **CHAPTER XXV.**: Immediate consequences and the family's move: Markland arranges assignment, sells or parts with Woodbine Lodge, and the family relocates—Lawn Cottage becomes the new home.
+
+
+- **CHAPTER XXVI.**: Markland's repentance and moral reflection: dialogues with Mr. Allison and Mrs. Markland center on truth, love, and the 'way' to real happiness—intellectual and moral reorientation.
+
+
+- **CHAPTER XXVII.**: Family decisions: Markland and Agnes debate whether to stay near their old home or remove further—pride and humility clash; they decide to accept Willet's neighborly offer.
+
+
+- **CHAPTER XXVIII.**: Esprit de corps: Markland starts to re-enter business modestly with Willet; continued moral re-education through Allison and neighbors; the family focuses on daily duty.
+
+
+- **CHAPTER XXIX.**: Lyon's capture and the legal unravelling of the fraud: an operative is captured; Lyon's network begins to be exposed.
+
+
+
+
+### Act III — Aftermath, Recovery, Moral Victory (Chapters XXX–XLIV)
+With Lyon exposed and a partial restitution made, the household moves toward moral recovery: Markland redeems a modest life through work, Agnes' charity deepens, Fanny recovers from heartbreak and marries Mr. Willet; the novel closes with the real moral of the 'good time coming.'
+
+
+
+- **CHAPTER XXX.**: Lyon's trial and restitution negotiations begin; Markland receives a share of recovered funds and contemplates re-investment; internal balance swings between ambition and humility.
+
+
+- **CHAPTER XXXI.**: A moral awakening: Markland wrestles with temptation, discusses truth and spiritual life with Mr. Allison, and refuses despair; he is set on a new path.
+
+
+- **CHAPTER XXXII.**: Legal and social clarifications: arrests, Fenwick's disappearance, Lyon's capture in the South and transport back for trial; Markland's public humiliation, private resolve.
+
+
+- **CHAPTER XXXIII.**: Markland's deepest crisis: attempted suicide and ultimate vision that restrains him; repentance — the story of his dream and deliverance.
+
+
+- **CHAPTER XXXIV.**: Relocation and kindness: the Marklands move to Lawn Cottage; neighbors rally (Willet, Allison); domestic reorganization and new habits of daily useful work begin.
+
+
+- **CHAPTER XXXV.**: New opportunities: Willet offers Markland employment & tenancy; debate over pride vs. need; Markland accepts neighborly help.
+
+
+- **CHAPTER XXXVI.**: Moral conversation and adjustment: Agnes encourages humility and practical charity; the family decides to remain near Woodbine Lodge and accept help.
+
+
+- **CHAPTER XXXVII.**: Preparations for removal: Willet improves the cottage, Markland arranges an assignment and sells Woodbine Lodge, the family moves and begins rebuilding.
+
+
+- **CHAPTER XXXVIII.**: Domestic recovery: time heals; Markland's temperament softens, he reads aloud, finds new meaning; seeds of the 'good time' appear in neighborly life.
+
+
+- **CHAPTER XXXIX.**: Social renewal and Fanny's reappearance in society under Flora's guidance; a party at Sweetbrier puts Fanny among neighbors and tests her new poise.
+
+
+- **CHAPTER XL.**: Plotters in New Orleans: Lyon's operative network at work; Falkner/Leach coordinate plans to secure Fanny; the novel reveals the conspiratorial side of Lyon's operation.
+
+
+- **CHAPTER XLI.**: Leach's field reports continue; he attempts to sway public opinion and obtain access to Fanny but is discouraged by local bonds between Willet and the Marklands.
+
+
+- **CHAPTER XLII.**: Operatives' flight and capture: careful police work sends Lyon's operatives fleeing, one captured, Lyon himself later arrested on a requisition and returned to New York for custody and negotiation.
+
+
+- **CHAPTER XLIII.**: Lyon's bargaining and the partial restitution of funds; Markland receives one portion of the recovered money and is tempted again but manages to resist excess.
+
+
+- **CHAPTER XLIV.**: Wedding and moral closure: Fanny marries Mr. Willet; family recovery follows; the book concludes with the moral lesson that the true 'good time' comes by inward spiritual change and neighborly uses.
+
+
+
+
+
+
+
+
+When rewriting a scene from a different POV, consider: what does this character know vs. not know? How do they interpret the same events differently? What emotions and physical sensations are unique to their experience? Filter every detail through their specific consciousness.<|im_end|>
+<|im_start|>user
+hello<|im_end|>
+<|im_start|>assistant
+<think>
+<tool_call>
+{"name": "read_story_object", "arguments": {"id": "52c6e217a09d4384b4a9fb692b1b7da6", "type": "character"}}
+</tool_call><|im_end|>
+<|im_start|>user
+?<|im_end|>
+<|im_start|>assistant
+<think>
+<tool_call>
+{"content": "Appearance: Dignified, elegant with a broad white mustache and black velvet waistcoat; habitually dressed with taste. Manner of speech: Polished, measured, sometimes ironic or pensive; uses common-sense moralizing in private conversations. Habits: Constantly reads newspapers and law books; attends to business affairs; enjoys quiet reflection; occasionally writes letters to his children. Personality: Benevolent but proud about outward status; self-controlled and principled in the face of temptation; a man of action who finds peace in duty and providence. Strengths: Financial success, moral clarity, ability to manage household economy, patience under trial, capacity for long-term planning (he develops an estate with a modest fortune). Weaknesses: Pride that sometimes shields him from acknowledging failure or risk; vulnerability to social glamour which makes him prone to rash decisions; occasional melancholy about his past. Values: Duty, prudence, charity, neighborliness, the dignity of work and honest trade. Family/friends: Married to Agnes Markland; has children (Fanny, others); neighbors include Willet and Allison; acquaintances include Lyon and Fenwick. Past history: Once an ambitious young merchant who built a large commercial house; retired for health reasons but continued business in the country. Current goals: To manage his remaining fortune responsibly while maintaining his moral integrity; to recover from financial loss without compromising principles; to provide for his family. Main motives: Preservation of reputation, provision for children, and guarding inner peace through work/industry. Conflict types: Moral (temptation vs. principle), economic (loss of capital and recovery), social (gaining or losing status amid others). Hidden secrets: A deep, hidden tenderness and vulnerability beneath the polished exterior; a past love/half-tragedy with a girl who became his first wife (which he keeps private) that influences his current decisions; his ability to see beyond outward appearances when assessing character. Critical incidents: Letter from Lyon reveals his plan to marry Fanny; Mrs. Elder's visit and subsequent charity; the auction of Woodbine Lodge; Lyon\u0027s arrest and final trial.", "id": "52c6e217a09d4384b4a9fb692b1b7da6", "name": "Edward Markland"}
+</tool_call><|im_end|>
+<|im_start|>user
+????????<|im_end|>
+<|im_start|>assistant
+
+
+The character is on a long journey, and I can't see the full narrative yet. Let's start by reading their environment through their eyes — what do they see?<|im_end|>
+<|im_start|>user
+???????????????????????<|im_end|>
+<|im_start|>assistant
+
+
+I'm about to read the story **through Edward Markland's consciousness**. What will they experience when they look at these locations and objects?
+
+---
+
+**CHAPTER IV.**: The contrast between inner restlessness and outer contentment.
+
+**What they see / feel:** A house with a wide, deep fireplace, fine china plates, and an unshaded billowing lawn — the domestic world where Agnes finds charity in the poor and Edward feels a restless hunger for change.<|im_end|>
+<|im_start|>user
+???????????????????????????<|im_end|>
+<|im_start|>assistant
+<think>
+<tool_call>
+{"name": "read_manuscript", "arguments": {"id": "148ce095dc5e473c9d2b8a2688f876e0", "offset": 0}}
+</tool_call><|im_end|>
+<|im_start|>user
+what are you doing<|im_end|>
+<|im_start|>assistant
+
+
+This will take some time. Here's what I'm seeing so far:
+
+**CHAPTER IV.**: The contrast between inner restlessness and outer contentment.
+
+**What they see / feel:** A house with a wide, deep fireplace, fine china plates, and an unshaded billowing lawn — the domestic world where Agnes finds charity in the poor and Edward feels a restless hunger for change.
+
+---<|im_end|>
+<|im_start|>user
+wtf<|im_end|>
+<|im_start|>assistant
+
+
+I've read 5 paragraphs from the manuscript. What specifically caught your attention?
